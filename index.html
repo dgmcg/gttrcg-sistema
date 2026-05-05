@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- GTTRCG v1778005081 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -422,6 +423,7 @@ tbody td { padding: 10px 12px; vertical-align: middle; color: var(--text); }
 </style>
 </head>
 <body>
+<script>console.log("[GTTRCG] Versão 1778005081 carregada");</script>
 <div id="app">
 
 <!-- LOGIN -->
@@ -8085,4 +8087,83 @@ function cancelarImportacao() {
   document.getElementById('import-preview').style.display = 'none';
   document.getElementById('import-actions').style.display = 'none';
 }
+</script>
+<script>
+// ============================================================
+// PATCH — handlePdfUpload FINAL
+// Usa chamarAppsScript() com token (igual às gravações)
+// Remove credentials:include e referências à Anthropic
+// ============================================================
+handlePdfUpload = async function(input, procId, etapaId, campoLabel) {
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const safeLabel = campoLabel.replace(/\s+/g,'_');
+  const filenameEl = document.getElementById(`pdf-filename-${etapaId}-${safeLabel}`);
+  const resultEl   = document.getElementById(`pdf-result-${etapaId}-${safeLabel}`);
+  if (!filenameEl || !resultEl) return;
+
+  filenameEl.textContent = `📄 ${file.name}`;
+  resultEl.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center">
+      <div style="width:32px;height:32px;border:3px solid var(--border2);border-top-color:var(--accent2);border-radius:50%;animation:gttrcg-spin 1s linear infinite;margin:0 auto 10px"></div>
+      <div style="font-size:13px;color:var(--text2)">Analisando documento com Gemini...</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Aguarde — pode levar até 30 segundos</div>
+    </div>`;
+
+  try {
+    // Verifica se URL e token estão configurados
+    const url = localStorage.getItem('gttrcg_apps_script_url');
+    const token = localStorage.getItem('gttrcg_api_token');
+
+    if (!url) throw new Error('URL do Apps Script não configurada. Acesse Configurações → Dados Fixos → URL do Google Apps Script.');
+    if (!token) throw new Error('Token de acesso não configurado. Acesse Configurações → Dados Fixos → Token de Acesso.');
+
+    // Converte PDF para base64
+    const base64 = await fileToBase64(file);
+
+    // Usa chamarAppsScript (com token, sem credentials) — igual às gravações
+    const data = await chamarAppsScript({
+      action: 'analisarPdf',
+      pdfBase64: base64,
+      filename: file.name,
+      usuario: APP.currentUser?.login || 'sistema',
+    });
+
+    if (!data) throw new Error('Sem resposta do servidor. Verifique a conexão e tente novamente.');
+    if (data.error === 'TOKEN_INVALIDO') throw new Error('Token inválido. Verifique se o token no sistema é igual ao API_TOKEN no Apps Script.');
+    if (data.error) throw new Error(data.error);
+    if (!data.analise) throw new Error('Resposta vazia do Gemini.');
+
+    // Salva no acompanhamento
+    const processos = ls('processos') || [];
+    const idx = processos.findIndex(p => p.id === procId);
+    if (idx >= 0) {
+      if (!processos[idx].acompanhamento) processos[idx].acompanhamento = {};
+      if (!processos[idx].acompanhamento[etapaId]) processos[idx].acompanhamento[etapaId] = {};
+      processos[idx].acompanhamento[etapaId][`_pdf_analise_${campoLabel}`] = data.analise;
+      processos[idx].acompanhamento[etapaId][`_pdf_nome_${campoLabel}`] = file.name;
+      ls('processos', processos);
+    }
+
+    resultEl.innerHTML = renderAnaliseResult(data.analise);
+    filenameEl.textContent = `📄 ${file.name} — Analisado ✓`;
+
+  } catch(err) {
+    resultEl.innerHTML = `
+      <div style="background:rgba(218,54,51,.08);border:1px solid rgba(218,54,51,.3);border-radius:var(--radius);padding:14px;font-size:12px">
+        <div style="color:var(--red2);font-weight:600;margin-bottom:8px">⚠ Erro na análise</div>
+        <div style="color:var(--text2);margin-bottom:10px">${err.message}</div>
+        <div style="font-size:11px;color:var(--text3);padding:8px;background:var(--bg2);border-radius:var(--radius);line-height:1.6">
+          <strong>Verifique:</strong><br>
+          1. Apps Script publicado com acesso "Qualquer pessoa"<br>
+          2. URL configurada em Configurações → URL do Apps Script<br>
+          3. Token configurado em Configurações → Token de Acesso<br>
+          4. GEMINI_API_KEY preenchida no Apps Script<br>
+          5. API_TOKEN no Apps Script igual ao Token configurado no sistema
+        </div>
+      </div>`;
+    filenameEl.textContent = '⚠ Erro ao analisar';
+  }
+};
 </script>
