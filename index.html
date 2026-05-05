@@ -7074,3 +7074,204 @@ renderKanban = function() {
 
 setTimeout(() => updateSidebarCounts(), 300);
 </script>
+<script>
+// ============================================================
+// SINCRONIZAÇÃO REAL COM GOOGLE SHEETS
+// Método: fetch sem credentials (Apps Script público por e-mail)
+// O Apps Script valida o e-mail via token passado no body
+// ============================================================
+
+// ── Configuração central ─────────────────────────────────────
+let GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+
+// Atualiza quando o usuário salva a URL
+const _origSalvarUrl = salvarAppsScriptUrl;
+salvarAppsScriptUrl = function() {
+  _origSalvarUrl();
+  GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+  iniciarSincronizacao();
+};
+
+// ── Chamada ao Apps Script (sem credentials — funciona cross-origin) ──
+async function chamarAppsScript(params) {
+  if (!GSHEET_URL) return null;
+  try {
+    const isWrite = params.action === 'set' || params.action === 'analisarPdf';
+    let resp;
+    if (isWrite) {
+      // Inclui o e-mail do usuário logado para autorização no servidor
+      const payload = { ...params };
+      if (APP.currentUser?.email) payload.email = APP.currentUser.email;
+      const url = new URL(GSHEET_URL);
+      resp = await fetch(url.toString(), {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      });
+    } else {
+      const url = new URL(GSHEET_URL);
+      Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : v));
+      resp = await fetch(url.toString());
+    }
+    const data = await resp.json();
+    return data;
+  } catch(e) {
+    console.warn('[GTTRCG Sheets] Erro:', e.message);
+    return null;
+  }
+}
+
+// ── Carrega todos os dados do Sheets na inicialização ─────────
+async function carregarDoSheets() {
+  if (!GSHEET_URL) return false;
+  try {
+    showSyncBadge('carregando');
+    const data = await chamarAppsScript({ action: 'getAllData' });
+    if (!data || data.error) {
+      showSyncBadge('offline');
+      return false;
+    }
+    // Importa cada chave do Sheets para o localStorage
+    let importados = 0;
+    Object.entries(data).forEach(([key, val]) => {
+      if (val !== null && val !== undefined) {
+        localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+        importados++;
+      }
+    });
+    showSyncBadge('ok');
+    console.log(`[GTTRCG Sheets] ${importados} coleções carregadas`);
+    return true;
+  } catch(e) {
+    showSyncBadge('offline');
+    return false;
+  }
+}
+
+// ── Grava uma coleção no Sheets (debounced) ───────────────────
+const _gravarTimers = {};
+function gravarNoSheets(key, data) {
+  if (!GSHEET_URL) return;
+  clearTimeout(_gravarTimers[key]);
+  _gravarTimers[key] = setTimeout(async () => {
+    const res = await chamarAppsScript({
+      action: 'set',
+      sheet: key,
+      data: data,
+    });
+    if (res?.ok) {
+      showSyncBadge('ok', 'Salvo ' + new Date().toLocaleTimeString('pt-BR'));
+    } else {
+      showSyncBadge('offline', 'Falha ao salvar ' + key);
+    }
+  }, 1000);
+}
+
+// ── Override de ls() para sincronizar com Sheets ─────────────
+const _origLsBase = ls;
+ls = function(key, val) {
+  if (val !== undefined) {
+    // Grava no localStorage (imediato)
+    localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+    // Grava no Sheets em background (debounced)
+    gravarNoSheets(key, val);
+    return val;
+  }
+  // Leitura: sempre do localStorage (já sincronizado)
+  const v = localStorage.getItem('gttrcg_' + key);
+  return v ? JSON.parse(v) : null;
+};
+
+// ── Badge de sincronização ────────────────────────────────────
+function showSyncBadge(estado, detalhe) {
+  let badge = document.getElementById('sync-badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'sync-badge';
+    badge.style.cssText = 'position:fixed;bottom:14px;left:14px;font-size:11px;padding:4px 10px;border-radius:20px;z-index:90;transition:all .3s;pointer-events:none';
+    document.body.appendChild(badge);
+  }
+  const configs = {
+    ok:          { bg:'rgba(63,185,80,.12)',  cor:'var(--green)',   txt: '● Sheets sincronizado' },
+    offline:     { bg:'rgba(210,153,34,.12)', cor:'var(--yellow2)', txt: '⚠ Modo offline' },
+    carregando:  { bg:'rgba(31,111,235,.1)',  cor:'var(--accent2)', txt: '↻ Conectando...' },
+  };
+  const cfg = configs[estado] || configs.offline;
+  badge.style.background = cfg.bg;
+  badge.style.color = cfg.cor;
+  badge.style.border = `1px solid ${cfg.cor}44`;
+  badge.textContent = detalhe ? `${cfg.txt} · ${detalhe}` : cfg.txt;
+}
+
+// ── Botão de sincronização manual ────────────────────────────
+function addSyncButtonReal() {
+  if (document.getElementById('sync-btn-real')) return;
+  const btn = document.createElement('button');
+  btn.id = 'sync-btn-real';
+  btn.className = 'btn';
+  btn.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:90;font-size:11px;padding:4px 12px';
+  btn.innerHTML = '↻ Sincronizar';
+  btn.onclick = async () => {
+    btn.textContent = '…';
+    const ok = await carregarDoSheets();
+    if (ok) {
+      // Recarrega as views
+      const activePage = document.querySelector('.page.active')?.id?.replace('page-','');
+      if (activePage === 'dashboard') renderDashboard();
+      else if (activePage === 'monitoramento') renderMonitoramento();
+      showToast('✓ Dados sincronizados do Google Sheets!');
+    } else {
+      showToast('⚠ Não foi possível conectar ao Sheets');
+    }
+    btn.innerHTML = '↻ Sincronizar';
+  };
+  document.body.appendChild(btn);
+}
+
+// ── testarAppsScript corrigido (sem credentials) ─────────────
+testarAppsScript = async function() {
+  const resultEl = document.getElementById('apps-script-test-result');
+  if (resultEl) resultEl.innerHTML = '<span style="color:var(--text3)">Testando conexão...</span>';
+  try {
+    const url = localStorage.getItem('gttrcg_apps_script_url');
+    if (!url) throw new Error('URL não configurada');
+    const fullUrl = new URL(url);
+    fullUrl.searchParams.set('action', 'ping');
+    const res = await fetch(fullUrl.toString());
+    const data = await res.json();
+    if (data.error === 'NAO_AUTENTICADO') {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--yellow2)">⚠ Apps Script respondeu mas requer autenticação Google. Verifique as permissões de acesso na publicação (deve ser "Qualquer usuário do Google").</span>`;
+      return;
+    }
+    if (data.error) throw new Error(data.error);
+    if (resultEl) resultEl.innerHTML = `<span style="color:var(--green)">✓ Conectado! ts: ${new Date(data.ts).toLocaleTimeString('pt-BR')}</span>`;
+    GSHEET_URL = url;
+    showSyncBadge('ok');
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<span style="color:var(--red2)">✗ Falha: ${e.message}</span>`;
+    showSyncBadge('offline');
+  }
+};
+
+// ── Inicialização ────────────────────────────────────────────
+async function iniciarSincronizacao() {
+  GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+  if (!GSHEET_URL) {
+    showSyncBadge('offline', 'URL não configurada');
+    addSyncButtonReal();
+    return;
+  }
+  addSyncButtonReal();
+  const ok = await carregarDoSheets();
+  if (ok) {
+    // Recarrega dados na view atual
+    initData();
+    updateSidebarCounts();
+    const activePage = document.querySelector('.page.active')?.id?.replace('page-','');
+    if (activePage) showPage(activePage);
+  }
+}
+
+// Inicia quando o sistema carrega
+setTimeout(iniciarSincronizacao, 500);
+</script>
