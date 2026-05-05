@@ -7624,3 +7624,276 @@ setTimeout(async () => {
   }
 }, 1000);
 </script>
+<script>
+// ============================================================
+// PATCH — CORRIGE SELECT DE UNIDADES NO MODAL DE PROCESSO
+// Usa o schema para encontrar o campo correto de nome/display
+// ============================================================
+
+const _origPopulateModalSelectsFix = populateModalSelects;
+populateModalSelects = function() {
+  _origPopulateModalSelectsFix();
+
+  // Rebuilds o select de unidades usando o schema dinâmico
+  const unidades = ls('unidades') || [];
+  const schema = ls('schema_unidades') || [];
+
+  // Determina qual campo usar como nome/label
+  // Prioridade: campo 'nome' → primeiro campo protegido → primeiro campo
+  const nomeField = (
+    schema.find(f => f.key === 'nome') ||
+    schema.find(f => f.protegido) ||
+    schema[0]
+  )?.key || 'nome';
+
+  const siglaField = schema.find(f => f.key === 'sigla')?.key || 'sigla';
+
+  const el = document.getElementById('proc-unidade');
+  if (!el) return;
+
+  el.innerHTML = '<option value="">Selecionar...</option>' +
+    unidades
+      .filter(u => u[nomeField]) // só lista unidades com nome preenchido
+      .map(u => {
+        const label = [u[siglaField], u[nomeField]].filter(Boolean).join(' — ');
+        return `<option value="${u[nomeField]}">${label}</option>`;
+      })
+      .join('');
+};
+</script>
+<script>
+// ============================================================
+// PATCH — LEITURA SCHEMA-AWARE EM TODOS OS SELECTS/LISTAS
+// Centraliza a lógica de leitura de objetos dos dados fixos
+// usando o schema dinâmico para encontrar os campos corretos
+// ============================================================
+
+// ── Helper central: obtém label e value de qualquer item ────
+function getItemDisplay(item, key) {
+  if (!item) return { label: '', value: '' };
+
+  // Strings simples (setores, pessoas, status, fases etc.)
+  if (typeof item === 'string') return { label: item, value: item };
+
+  // Objetos — lê o schema para saber qual campo é o principal
+  const schema = ls('schema_' + key) || [];
+
+  // Campo de exibição principal: primeiro campo protegido ou campo 'nome'/'sigla'
+  const mainField = (
+    schema.find(f => f.key === 'nome') ||
+    schema.find(f => f.key === 'sigla') ||
+    schema.find(f => f.protegido) ||
+    schema[0]
+  )?.key;
+
+  // Campo secundário (sigla ou segundo campo protegido)
+  const subField = (
+    schema.find(f => f.key === 'sigla' && f.key !== mainField) ||
+    schema.filter(f => f.protegido)[1]
+  )?.key;
+
+  const mainVal = mainField ? item[mainField] : (item.nome || item.sigla || item.valor || Object.values(item).find(v => typeof v === 'string' && v));
+  const subVal  = subField  ? item[subField]  : null;
+
+  const label = [subVal, mainVal].filter(Boolean).join(' — ') || item.id || '?';
+  const value = mainVal || item.id || '';
+
+  return { label, value, _item: item };
+}
+
+// ── getListaItens: usa getItemDisplay ────────────────────────
+getListaItens = function(key) {
+  const data = ls(key) || [];
+  if (data.length === 0) return [];
+  return data.map(item => {
+    const d = getItemDisplay(item, key);
+    return { label: d.label, value: d.value, _item: typeof item === 'object' ? item : null };
+  }).filter(x => x.value);
+};
+
+// ── populateModalSelects: schema-aware em todos os campos ────
+populateModalSelects = function() {
+  const unidades    = ls('unidades')      || [];
+  const setores     = ls('setores')       || [];
+  const pessoas     = ls('pessoas')       || [];
+  const oss         = ls('oss')           || [];
+  const statuses    = ls('statusProcesso')|| [];
+  const fases       = ls('fases')         || [];
+  const tiposProc   = ls('tiposProcesso') || ['Regular','Dispensa de Seleção','Emergencial'];
+  const scList      = ls('statusContrato')|| ['Vigente','Expirado','Nova Unidade'];
+  const tiposUn     = ls('tiposUnidade')  || [];
+
+  // Unidades — usa schema para nome e sigla
+  const unItems = unidades.map(u => getItemDisplay(u, 'unidades')).filter(x => x.value);
+  const el = document.getElementById('proc-unidade');
+  if (el) el.innerHTML = '<option value="">Selecionar...</option>' +
+    unItems.map(x => `<option value="${x.value}">${x.label}</option>`).join('');
+
+  // OSS — sigla + nome
+  const ossItems = oss.map(o => getItemDisplay(o, 'oss')).filter(x => x.value);
+  const listOss = document.getElementById('list-oss');
+  if (listOss) listOss.innerHTML = ossItems.map(x => `<option value="${x.value}">`).join('');
+
+  // Setores e Pessoas (strings simples)
+  const listSetores = document.getElementById('list-setores');
+  if (listSetores) listSetores.innerHTML = setores.map(s => `<option value="${s}">`).join('');
+
+  const listPessoas = document.getElementById('list-pessoas');
+  if (listPessoas) listPessoas.innerHTML = pessoas.map(p => `<option value="${p}">`).join('');
+
+  // Tipos de unidade
+  const listTipos = document.getElementById('list-tipos');
+  if (listTipos) listTipos.innerHTML = tiposUn.map(t => `<option value="${t}">`).join('');
+
+  // Status, Fases, Tipos de processo, Status contrato
+  const procStatus = document.getElementById('proc-status');
+  if (procStatus) procStatus.innerHTML = '<option value="">Selecionar...</option>' +
+    statuses.map(s => `<option>${s}</option>`).join('');
+
+  const procFase = document.getElementById('proc-fase');
+  if (procFase) procFase.innerHTML = '<option value="">Selecionar...</option>' +
+    fases.map(f => `<option>${f}</option>`).join('');
+
+  const procTipoProc = document.getElementById('proc-tipo-processo');
+  if (procTipoProc) procTipoProc.innerHTML = '<option value="">Selecionar...</option>' +
+    tiposProc.map(t => `<option>${t}</option>`).join('');
+
+  const procScTop = document.getElementById('proc-status-cg-top');
+  if (procScTop) procScTop.innerHTML = '<option value="">Selecionar...</option>' +
+    scList.map(s => `<option>${s}</option>`).join('');
+
+  const procSc = document.getElementById('proc-status-cg');
+  if (procSc) procSc.innerHTML = '<option value="">-</option>' +
+    scList.map(s => `<option>${s}</option>`).join('');
+};
+
+// ── populateFilters (monitoramento): schema-aware ────────────
+populateFilters = function() {
+  const processos = ls('processos') || [];
+  const tipos     = [...new Set(processos.map(p => p.tipo).filter(Boolean))];
+  const statuses  = ls('statusProcesso') || [];
+  const fases     = ls('fases') || [];
+  const usuarios  = ls('usuarios') || [];
+
+  const sel = (id, opts, isObj) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    el.innerHTML = el.options[0].outerHTML + opts.map(o =>
+      isObj
+        ? `<option value="${o.value}">${o.label}</option>`
+        : `<option value="${o}">${o}</option>`
+    ).join('');
+    el.value = cur;
+  };
+
+  sel('monitor-tipo',    tipos,    false);
+  sel('monitor-status',  statuses, false);
+  sel('monitor-fase',    fases,    false);
+
+  // Filtro de usuário — pelo login + nome
+  const monUser = document.getElementById('monitor-usuario');
+  if (monUser) {
+    const cur = monUser.value;
+    monUser.innerHTML = '<option value="">Todos os usuários</option>' +
+      usuarios
+        .filter(u => u.perfil !== 'admin' || u.login === 'ivson')
+        .map(u => `<option value="${u.login}">${u.nome || u.login}</option>`)
+        .join('');
+    monUser.value = cur;
+  }
+};
+
+// ── renderDadosFixos: usa getItemDisplay para exibir itens ───
+// Patch na parte de listagem das unidades e OSS
+const _origRenderDadosFixosDisplay = renderDadosFixos;
+renderDadosFixos = function() {
+  _origRenderDadosFixosDisplay();
+
+  // Corrige exibição de itens nas seções de objetos (unidades, oss)
+  ['unidades','oss'].forEach(key => {
+    const data = ls(key) || [];
+    if (data.length === 0) return;
+    const container = document.getElementById('dados-tabs-container');
+    if (!container) return;
+
+    // Encontra a config-section desta chave
+    const sections = container.querySelectorAll('.config-section');
+    sections.forEach(sec => {
+      const btn = sec.querySelector('[onclick*="openAdicionarDadoFixo"]');
+      if (!btn || !btn.getAttribute('onclick').includes(`'${key}'`)) return;
+
+      const list = sec.querySelector('.config-list');
+      if (!list) return;
+
+      // Reescreve os itens com label correto
+      list.innerHTML = data.slice(0, 8).map(item => {
+        const d = getItemDisplay(item, key);
+        const schema = ls('schema_' + key) || [];
+        // Sub-info: próximos 2 campos após o principal
+        const mainField = schema.find(f => f.key === 'nome' || f.key === 'sigla' || f.protegido)?.key;
+        const subFields = schema.filter(f => f.key !== mainField).slice(0, 2);
+        const subText = subFields.map(f => item[f.key]).filter(Boolean).join(' · ');
+
+        return `<div class="config-item">
+          <div class="config-item-text">
+            <div style="font-weight:500">${d.label || '—'}</div>
+            ${subText ? `<div class="config-item-sub">${subText}</div>` : ''}
+          </div>
+          <div class="config-item-actions">
+            <button class="btn sm" onclick="openEditarDadoFixo('${key}','${item.id}')">Editar</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      if (data.length > 8) {
+        list.innerHTML += `<div style="font-size:12px;color:var(--text3);padding:8px 10px">...e mais ${data.length - 8} itens</div>`;
+      }
+    });
+  });
+};
+
+// ── autoFillUnidade: usa getItemDisplay ──────────────────────
+autoFillUnidade = function() {
+  const nomeSel = document.getElementById('proc-unidade')?.value;
+  if (!nomeSel) return;
+  const unidades = ls('unidades') || [];
+
+  // Busca pelo valor do select (que pode ser nome ou sigla dependendo do schema)
+  const u = unidades.find(x => {
+    const d = getItemDisplay(x, 'unidades');
+    return d.value === nomeSel || x.nome === nomeSel || x.sigla === nomeSel;
+  });
+  if (!u) return;
+
+  const fieldMap = {
+    tipo:       'proc-tipo',
+    cg:         'proc-cg',
+    macro:      'proc-macro',
+    regiao:     'proc-regiao',
+    cidade:     'proc-municipio',
+    cgInicio:   'proc-vig-inicio',
+    cgFim:      'proc-vig-fim',
+    ossGestora: 'proc-oss',
+    porte:      'proc-porte',
+  };
+
+  Object.entries(fieldMap).forEach(([uField, formId]) => {
+    const el = document.getElementById(formId);
+    if (el && u[uField]) el.value = u[uField];
+  });
+
+  // Status do contrato inferido
+  const topEl = document.getElementById('proc-status-cg-top');
+  if (topEl && u.cgFim) {
+    const dias = Math.ceil((new Date(u.cgFim + 'T12:00:00') - new Date()) / 86400000);
+    topEl.value = dias < 0 ? 'Expirado' : 'Vigente';
+    const scEl = document.getElementById('proc-status-cg');
+    if (scEl) scEl.value = topEl.value;
+  }
+
+  showToast('Dados da unidade preenchidos automaticamente ✓');
+};
+
+console.log('[GTTRCG] Schema-aware selects carregados ✓');
+</script>
