@@ -7240,7 +7240,7 @@ testarAppsScript = async function() {
     const res = await fetch(fullUrl.toString());
     const data = await res.json();
     if (data.error === 'NAO_AUTENTICADO') {
-      if (resultEl) resultEl.innerHTML = `<span style="color:var(--yellow2)">⚠ Apps Script respondeu mas requer autenticação Google. Verifique as permissões de acesso na publicação (deve ser "Qualquer usuário do Google").</span>`;
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--yellow2)">⚠ Apps Script respondeu mas o código ainda está na versão antiga que exige login Google. Atualize o código no Apps Script pelo arquivo GTTRCG_AppsScript_FINAL.js e publique uma nova versão.</span>`;
       return;
     }
     if (data.error) throw new Error(data.error);
