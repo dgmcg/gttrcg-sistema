@@ -7469,3 +7469,158 @@ setTimeout(() => {
   }
 }, 800);
 </script>
+<script>
+// ============================================================
+// PATCH SYNC v3 — AUTENTICAÇÃO POR TOKEN
+// Resolve NAO_AUTORIZADO: usa token secreto em vez de e-mail
+// ============================================================
+
+// Token configurado pelo admin no sistema
+// Deve ser o mesmo valor que API_TOKEN no Apps Script
+let GSHEET_TOKEN = localStorage.getItem('gttrcg_api_token') || '';
+
+// Override de chamarAppsScript para incluir token nas escritas
+chamarAppsScript = async function(params) {
+  if (!GSHEET_URL) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const isWrite = params.action === 'set' || params.action === 'analisarPdf';
+    let resp;
+    if (isWrite) {
+      const payload = {
+        ...params,
+        token: GSHEET_TOKEN,
+        usuario: APP.currentUser?.login || 'sistema',
+      };
+      resp = await fetch(GSHEET_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        signal: controller.signal,
+      });
+    } else {
+      const url = new URL(GSHEET_URL);
+      Object.entries(params).forEach(([k,v]) => {
+        url.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+      });
+      resp = await fetch(url.toString(), { signal: controller.signal });
+    }
+    clearTimeout(timeout);
+    const text = await resp.text();
+    try { return JSON.parse(text); }
+    catch(e) {
+      console.warn('[GTTRCG] Resposta não-JSON:', text.slice(0,200));
+      return null;
+    }
+  } catch(e) {
+    clearTimeout(timeout);
+    console.warn('[GTTRCG] Erro:', e.message);
+    return null;
+  }
+};
+
+// Override de gravarNoSheets para mostrar erros claros
+gravarNoSheets = function(key, data) {
+  if (!GSHEET_URL || !GSHEET_TOKEN) return;
+  clearTimeout((_gravarTimersFix||{})[key] || 0);
+  const timers = window._gravarTimersFix = window._gravarTimersFix || {};
+  timers[key] = setTimeout(async () => {
+    try {
+      const res = await chamarAppsScript({ action: 'set', sheet: key, data });
+      if (res?.ok) {
+        showSyncBadge('ok', 'Salvo às ' + new Date().toLocaleTimeString('pt-BR'));
+      } else if (res?.error === 'TOKEN_INVALIDO') {
+        showSyncBadge('offline', 'Token inválido — verifique em Configurações');
+      } else {
+        const msg = res?.error || res?.msg || 'falha';
+        showSyncBadge('offline', msg);
+        setTimeout(() => gravarNoSheets(key, ls(key)), 8000);
+      }
+    } catch(e) {
+      showSyncBadge('offline', 'Sem conexão');
+    }
+  }, 1200);
+};
+
+// Override ls() para usar token
+ls = function(key, val) {
+  if (val !== undefined) {
+    localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+    if (GSHEET_URL && GSHEET_TOKEN) gravarNoSheets(key, val);
+    return val;
+  }
+  const v = localStorage.getItem('gttrcg_' + key);
+  return v ? JSON.parse(v) : null;
+};
+
+// ── Injeta campo de Token na seção de configuração ──────────
+const _origRenderConfigToken = renderConfiguracoes;
+renderConfiguracoes = function() {
+  _origRenderConfigToken();
+  setTimeout(() => {
+    const sec = document.getElementById('apps-script-url-section');
+    if (!sec || sec.querySelector('#api-token-input')) return;
+    const tokenVal = localStorage.getItem('gttrcg_api_token') || '';
+    const div = document.createElement('div');
+    div.style.cssText = 'margin-top:14px;padding-top:14px;border-top:1px solid var(--border)';
+    div.innerHTML = `
+      <label style="font-size:12px;color:var(--text2);font-weight:500;display:block;margin-bottom:6px">
+        Token de Acesso (API_TOKEN)
+        <span style="font-size:11px;font-weight:400;color:var(--text3);margin-left:6px">
+          Mesmo valor configurado no Apps Script
+        </span>
+      </label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="password" id="api-token-input"
+          value="${tokenVal}"
+          placeholder="Cole aqui o token criado no Apps Script"
+          style="flex:1;font-family:var(--mono);font-size:12px">
+        <button class="btn primary sm" onclick="salvarApiToken()">Salvar Token</button>
+      </div>
+      <div id="token-status" style="font-size:11px;margin-top:6px;color:${tokenVal?'var(--green)':'var(--red2)'}">
+        ${tokenVal ? '✓ Token configurado' : '⚠ Token não configurado — gravações não funcionarão'}
+      </div>`;
+    sec.querySelector('.config-section-body').appendChild(div);
+  }, 300);
+};
+
+function salvarApiToken() {
+  const val = document.getElementById('api-token-input')?.value.trim();
+  if (!val) { showToast('Informe o token!'); return; }
+  localStorage.setItem('gttrcg_api_token', val);
+  GSHEET_TOKEN = val;
+  const status = document.getElementById('token-status');
+  if (status) { status.style.color = 'var(--green)'; status.textContent = '✓ Token salvo!'; }
+  showToast('Token salvo! Testando gravação...');
+  // Testa gravação imediatamente
+  setTimeout(async () => {
+    const res = await chamarAppsScript({ action: 'set', sheet: '_ping_test', data: { ts: Date.now() } });
+    if (res?.ok) {
+      showToast('✓ Gravação funcionando!');
+      showSyncBadge('ok');
+    } else if (res?.error === 'TOKEN_INVALIDO') {
+      showToast('✗ Token inválido — verifique se é igual ao Apps Script');
+      showSyncBadge('offline', 'Token inválido');
+    } else {
+      showToast('⚠ Gravação testada: ' + (res?.error || 'sem resposta'));
+    }
+  }, 500);
+}
+
+// Carrega token salvo
+GSHEET_TOKEN = localStorage.getItem('gttrcg_api_token') || '';
+
+// Reinicia sincronização com token
+setTimeout(async () => {
+  GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+  GSHEET_TOKEN = localStorage.getItem('gttrcg_api_token') || '';
+  if (GSHEET_URL) {
+    const ok = await carregarDoSheets();
+    if (ok) {
+      updateSidebarCounts();
+      renderDashboard();
+    }
+  }
+}, 1000);
+</script>
