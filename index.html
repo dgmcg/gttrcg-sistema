@@ -7897,3 +7897,192 @@ autoFillUnidade = function() {
 
 console.log('[GTTRCG] Schema-aware selects carregados ✓');
 </script>
+<script>
+// ============================================================
+// IMPORTADOR DE DADOS INICIAIS
+// Permite importar o arquivo GTTRCG_dados_iniciais.json
+// ============================================================
+
+// ── Injeta botão de importação em Configurações ──────────────
+(function injectImportButton() {
+  // Adiciona aba "Importar" nas configurações
+  const _origRenderConfig3 = renderConfiguracoes;
+  renderConfiguracoes = function() {
+    _origRenderConfig3();
+    // Adiciona tab "Importar" se não existir
+    const tabsEl = document.querySelector('#page-configuracoes .tabs');
+    if (!tabsEl || tabsEl.querySelector('[data-tab="importar"]')) return;
+    const tabEl = document.createElement('div');
+    tabEl.className = 'tab';
+    tabEl.setAttribute('data-tab','importar');
+    tabEl.textContent = '📥 Importar Dados';
+    tabEl.onclick = function() { switchConfigTab('importar', this); };
+    tabsEl.appendChild(tabEl);
+
+    // Adiciona painel de importação se não existir
+    if (!document.getElementById('tab-importar')) {
+      const panel = document.createElement('div');
+      panel.id = 'tab-importar';
+      panel.className = 'tab-content';
+      panel.innerHTML = `
+        <div class="config-section">
+          <div class="config-section-header">
+            <div class="config-section-title">Importar Dados Iniciais</div>
+          </div>
+          <div class="config-section-body">
+            <div class="alert info" style="margin-bottom:16px">
+              <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14" style="flex-shrink:0">
+                <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+              </svg>
+              <div>
+                Importe o arquivo <strong>GTTRCG_dados_iniciais.json</strong> para carregar 
+                automaticamente todas as unidades, OSS, setores, status e configurações pré-definidas.
+                <br><br>
+                <strong>Atenção:</strong> a importação substitui os dados existentes de cada categoria.
+                Processos cadastrados não são afetados.
+              </div>
+            </div>
+
+            <div style="margin-bottom:20px">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:20px;border:2px dashed var(--border2);border-radius:var(--radius2);transition:border-color .15s;background:var(--bg2)"
+                     onmouseover="this.style.borderColor='var(--accent2)'"
+                     onmouseout="this.style.borderColor='var(--border2)'">
+                <svg viewBox="0 0 16 16" fill="currentColor" width="24" height="24" style="color:var(--accent2);flex-shrink:0">
+                  <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                  <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                </svg>
+                <div>
+                  <div style="font-size:14px;font-weight:500;color:var(--text)">Selecionar arquivo JSON</div>
+                  <div style="font-size:12px;color:var(--text3);margin-top:2px">GTTRCG_dados_iniciais.json</div>
+                </div>
+                <input type="file" accept=".json,application/json" style="display:none"
+                       onchange="processarImportacao(this)">
+              </label>
+            </div>
+
+            <div id="import-preview" style="display:none"></div>
+            <div id="import-actions" style="display:none;margin-top:16px">
+              <button class="btn primary" onclick="confirmarImportacao()">
+                ✓ Confirmar Importação
+              </button>
+              <button class="btn" onclick="cancelarImportacao()" style="margin-left:8px">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>`;
+      const configContent = document.querySelector('#page-configuracoes #content') ||
+                            document.getElementById('page-configuracoes');
+      // Insere após o último tab-content existente
+      const lastTab = document.querySelector('#page-configuracoes .tab-content:last-of-type');
+      if (lastTab) lastTab.after(panel);
+    }
+  };
+})();
+
+let _importData = null;
+
+function processarImportacao(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      _importData = data;
+      mostrarPreviewImportacao(data, file.name);
+    } catch(err) {
+      document.getElementById('import-preview').style.display = 'block';
+      document.getElementById('import-preview').innerHTML = `
+        <div class="alert danger">✗ Arquivo inválido: ${err.message}</div>`;
+      document.getElementById('import-actions').style.display = 'none';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function mostrarPreviewImportacao(data, filename) {
+  const preview = document.getElementById('import-preview');
+  const actions = document.getElementById('import-actions');
+  preview.style.display = 'block';
+  actions.style.display = 'block';
+
+  const labels = {
+    unidades:'Unidades de Saúde', oss:'Organizações Sociais', setores:'Setores',
+    pessoas:'Pessoas', statusProcesso:'Status de Processo', fases:'Fases',
+    tiposProcesso:'Tipos de Processo', statusContrato:'Status do Contrato',
+    tiposUnidade:'Tipos de Unidade', schema_unidades:'Schema Unidades',
+    schema_oss:'Schema OSS', usuarios:'Usuários',
+    processos:'Processos', alertas_pendentes:'Alertas',
+  };
+
+  const rows = Object.entries(data)
+    .filter(([k]) => k !== 'processos') // não importa processos automáticamente
+    .map(([k, v]) => {
+      const count = Array.isArray(v) ? v.length : (v ? 1 : 0);
+      const existente = ls(k);
+      const existCount = Array.isArray(existente) ? existente.length : 0;
+      const status = existCount > 0 ? `⚠ Substituirá ${existCount} itens existentes` : '✓ Novo';
+      const statusCor = existCount > 0 ? 'var(--yellow2)' : 'var(--green)';
+      return `<tr>
+        <td style="padding:6px 10px;font-size:13px">${labels[k] || k}</td>
+        <td style="padding:6px 10px;font-size:13px;text-align:center"><strong>${count}</strong></td>
+        <td style="padding:6px 10px;font-size:12px;color:${statusCor}">${status}</td>
+      </tr>`;
+    }).join('');
+
+  preview.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);overflow:hidden">
+      <div style="padding:10px 14px;background:var(--bg1);border-bottom:1px solid var(--border);font-size:13px;font-weight:500">
+        📄 ${filename} — Preview da Importação
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:var(--bg2)">
+            <th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text3);font-weight:500">Categoria</th>
+            <th style="padding:6px 10px;text-align:center;font-size:11px;color:var(--text3);font-weight:500">Itens</th>
+            <th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text3);font-weight:500">Situação</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:12px;color:var(--text3);margin-top:8px">
+      ⚠ Processos cadastrados não serão afetados pela importação.
+    </div>`;
+}
+
+function confirmarImportacao() {
+  if (!_importData) return;
+  const btn = document.querySelector('#import-actions .btn.primary');
+  if (btn) { btn.textContent = '⏳ Importando...'; btn.disabled = true; }
+
+  const skip = ['processos']; // nunca sobrescreve processos
+  let importados = 0;
+
+  Object.entries(_importData).forEach(([key, val]) => {
+    if (skip.includes(key)) return;
+    if (val === null || val === undefined) return;
+    ls(key, val);
+    importados++;
+  });
+
+  // Recarrega tudo
+  setTimeout(() => {
+    updateSidebarCounts();
+    renderDashboard();
+    renderConfiguracoes();
+    showToast(`✓ ${importados} categorias importadas com sucesso!`);
+    document.getElementById('import-preview').style.display = 'none';
+    document.getElementById('import-actions').style.display = 'none';
+    _importData = null;
+    if (btn) { btn.textContent = '✓ Confirmar Importação'; btn.disabled = false; }
+  }, 500);
+}
+
+function cancelarImportacao() {
+  _importData = null;
+  document.getElementById('import-preview').style.display = 'none';
+  document.getElementById('import-actions').style.display = 'none';
+}
+</script>
