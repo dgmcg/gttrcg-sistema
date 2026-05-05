@@ -7275,3 +7275,197 @@ async function iniciarSincronizacao() {
 // Inicia quando o sistema carrega
 setTimeout(iniciarSincronizacao, 500);
 </script>
+<script>
+// ============================================================
+// PATCH SYNC v2 — CORRIGE OS 3 BUGS DE SINCRONIZAÇÃO
+// ============================================================
+
+// ── BUG 1 FIX: carregarDoSheets não sobrescreve dados locais com null/vazio ──
+carregarDoSheets = async function() {
+  if (!GSHEET_URL) return false;
+  try {
+    showSyncBadge('carregando');
+    const data = await chamarAppsScript({ action: 'getAllData' });
+    if (!data || data.error) {
+      showSyncBadge('offline');
+      return false;
+    }
+
+    let importados = 0;
+    Object.entries(data).forEach(([key, val]) => {
+      // Só importa se vier dados reais do Sheets (não null, não array vazio)
+      if (val === null || val === undefined) return;
+      if (Array.isArray(val) && val.length === 0) return; // ignora arrays vazios
+      if (typeof val === 'object' && Object.keys(val).length === 0) return;
+      localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+      importados++;
+    });
+
+    showSyncBadge('ok', `${importados} coleções carregadas`);
+    console.log(`[GTTRCG Sheets] ${importados} coleções importadas do Sheets`);
+    return true;
+  } catch(e) {
+    console.warn('[GTTRCG Sheets] carregarDoSheets erro:', e.message);
+    showSyncBadge('offline');
+    return false;
+  }
+};
+
+// ── BUG 2 FIX: gravarNoSheets com retry e log detalhado ──
+const _gravarTimersFix = {};
+gravarNoSheets = function(key, data) {
+  if (!GSHEET_URL) return;
+  clearTimeout(_gravarTimersFix[key]);
+  _gravarTimersFix[key] = setTimeout(async () => {
+    try {
+      const res = await chamarAppsScript({
+        action: 'set',
+        sheet: key,
+        data: data,
+      });
+      if (res?.ok) {
+        showSyncBadge('ok', 'Salvo às ' + new Date().toLocaleTimeString('pt-BR'));
+        console.log(`[GTTRCG Sheets] ✓ ${key} gravado`);
+      } else {
+        const errMsg = res?.error || res?.msg || 'sem resposta';
+        console.warn(`[GTTRCG Sheets] ✗ falha ao gravar ${key}:`, errMsg);
+        showSyncBadge('offline', 'Falha: ' + errMsg);
+        // Retry automático após 5s
+        setTimeout(() => gravarNoSheets(key, ls(key)), 5000);
+      }
+    } catch(e) {
+      console.warn('[GTTRCG Sheets] erro de rede ao gravar:', e.message);
+      showSyncBadge('offline', 'Sem conexão');
+    }
+  }, 1200); // aumentado para 1.2s para evitar gravações em cascata
+};
+
+// ── BUG 3 FIX: iniciarSincronizacao NÃO chama initData depois do carregamento ──
+iniciarSincronizacao = async function() {
+  GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+  if (!GSHEET_URL) {
+    showSyncBadge('offline', 'URL não configurada');
+    addSyncButtonReal();
+    return;
+  }
+  addSyncButtonReal();
+
+  const ok = await carregarDoSheets();
+  if (ok) {
+    // Atualiza as views sem chamar initData (que sobrescreveria os dados)
+    updateSidebarCounts();
+    renderDashboard();
+    console.log('[GTTRCG Sheets] Dados carregados do Sheets com sucesso');
+  }
+  // Se falhou, continua com localStorage — não interrompe o sistema
+};
+
+// ── FIX: ls() override — grava no Sheets com e-mail do usuário ──
+ls = function(key, val) {
+  if (val !== undefined) {
+    localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+    gravarNoSheets(key, val);
+    return val;
+  }
+  const v = localStorage.getItem('gttrcg_' + key);
+  return v ? JSON.parse(v) : null;
+};
+
+// ── FIX: chamarAppsScript com timeout e melhor tratamento de erro ──
+chamarAppsScript = async function(params) {
+  if (!GSHEET_URL) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+  try {
+    const isWrite = params.action === 'set' || params.action === 'analisarPdf';
+    let resp;
+    if (isWrite) {
+      const payload = { ...params };
+      // Inclui e-mail para autorização nas gravações
+      if (APP.currentUser?.email) payload.email = APP.currentUser.email;
+      // Fallback: tenta pegar e-mail do usuário logado na lista
+      if (!payload.email && APP.currentUser?.login) {
+        const users = JSON.parse(localStorage.getItem('gttrcg_usuarios') || '[]');
+        const u = users.find(x => x.login === APP.currentUser.login);
+        if (u?.email) payload.email = u.email;
+      }
+      resp = await fetch(GSHEET_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        signal: controller.signal,
+      });
+    } else {
+      const url = new URL(GSHEET_URL);
+      Object.entries(params).forEach(([k, v]) => {
+        url.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+      });
+      resp = await fetch(url.toString(), { signal: controller.signal });
+    }
+    clearTimeout(timeout);
+    const text = await resp.text();
+    try {
+      return JSON.parse(text);
+    } catch(e) {
+      console.warn('[GTTRCG Sheets] Resposta não-JSON:', text.slice(0, 200));
+      return null;
+    }
+  } catch(e) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') {
+      console.warn('[GTTRCG Sheets] Timeout (15s)');
+    } else {
+      console.warn('[GTTRCG Sheets] Erro de rede:', e.message);
+    }
+    return null;
+  }
+};
+
+// ── FIX: testarAppsScript com mensagem correta ──
+testarAppsScript = async function() {
+  const resultEl = document.getElementById('apps-script-test-result');
+  if (resultEl) resultEl.innerHTML = '<span style="color:var(--text3)">Testando conexão...</span>';
+  try {
+    const url = localStorage.getItem('gttrcg_apps_script_url');
+    if (!url) throw new Error('URL não configurada');
+    const fullUrl = new URL(url);
+    fullUrl.searchParams.set('action', 'ping');
+    const resp = await fetch(fullUrl.toString());
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) { throw new Error('Resposta inválida: ' + text.slice(0,100)); }
+
+    if (data.error === 'NAO_AUTENTICADO') {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--yellow2)">
+        ⚠ O código do Apps Script ainda é a versão antiga. 
+        Substitua pelo arquivo GTTRCG_AppsScript_FINAL.js e publique uma nova versão.
+      </span>`;
+      return;
+    }
+    if (data.error) throw new Error(data.error);
+    if (data.ok) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--green)">✓ Conectado com sucesso! Sistema: ${data.sistema || 'GTTRCG'} · ${new Date(data.ts).toLocaleTimeString('pt-BR')}</span>`;
+      GSHEET_URL = url;
+      showSyncBadge('ok');
+      // Testa também uma gravação simples
+      const testRes = await chamarAppsScript({ action: 'ping' });
+      if (testRes?.ok) {
+        if (resultEl) resultEl.innerHTML += `<br><span style="color:var(--green);font-size:11px">✓ Leitura e escrita funcionando corretamente</span>`;
+      }
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<span style="color:var(--red2)">✗ Falha: ${e.message}</span>`;
+    showSyncBadge('offline');
+  }
+};
+
+// ── Reinicia a sincronização com os fixes aplicados ──
+setTimeout(() => {
+  GSHEET_URL = localStorage.getItem('gttrcg_apps_script_url') || '';
+  if (GSHEET_URL) {
+    console.log('[GTTRCG Sheets] Reiniciando sincronização com fixes...');
+    iniciarSincronizacao();
+  }
+}, 800);
+</script>
