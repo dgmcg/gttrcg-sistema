@@ -8476,3 +8476,220 @@ gerarAlertas = function() {
 
 console.log('[GTTRCG] Patch final carregado ✓');
 </script>
+<script>
+// ============================================================
+// PATCH — CORREÇÃO DE BUGS
+// 1. Responsável GTTRCG: select de membros da equipe
+// 2. Modal etapa fluxo: renomeia campos Fase/Subfase
+// 3. atualizarFaseProcesso: usa e.subfase (não e.fase)
+// 4. Config listas: barra de rolagem, sem limite de 8 itens
+// ============================================================
+
+// ── 1. RESPONSÁVEL GTTRCG: select de usuários da equipe ─────
+// Patch no modal de novo processo: transforma o input texto em select
+(function patchResponsavelSelect() {
+  const el = document.getElementById('proc-responsavel');
+  if (!el || el.tagName === 'SELECT') return;
+
+  const sel = document.createElement('select');
+  sel.id = 'proc-responsavel';
+  sel.className = el.className;
+  sel.style.cssText = el.style.cssText || '';
+
+  // Popula com membros da equipe
+  const populateResp = () => {
+    const usuarios = getUsuariosAtribuicao ? getUsuariosAtribuicao() : (ls('usuarios') || []).filter(u => u.login !== 'admin');
+    sel.innerHTML = '<option value="">— Selecionar responsável —</option>' +
+      usuarios.map(u => `<option value="${u.login}">${u.nome || u.login}</option>`).join('');
+  };
+
+  populateResp();
+  el.parentNode.replaceChild(sel, el);
+
+  // Remove o datalist de pessoas que era usado antes
+  const dl = document.getElementById('list-pessoas');
+  if (dl) dl.remove();
+
+  // Re-popula quando o modal abre (usuários podem mudar)
+  const _origOpenNovoProc = openNovoProcesso;
+  openNovoProcesso = function() {
+    _origOpenNovoProc();
+    setTimeout(populateResp, 50);
+  };
+  const _origOpenEditarProc = openEditarProcesso;
+  openEditarProcesso = function(id) {
+    _origOpenEditarProc(id);
+    setTimeout(populateResp, 50);
+  };
+})();
+
+// ── 2. MODAL ETAPA FLUXO: renomeia Fase → Fase Principal e Subfase → Fase ──
+(function renomearCamposEtapa() {
+  // Renomeia o label "Fase *" para "Fase Principal"
+  const faseLabel = document.querySelector('label[for="etapa-fase-edit"], #modal-etapa-fluxo label');
+  document.querySelectorAll('#modal-etapa-fluxo .field-group').forEach(fg => {
+    const label = fg.querySelector('label');
+    const input = fg.querySelector('select, input');
+    if (!label || !input) return;
+    if (input.id === 'etapa-fase-edit') {
+      label.textContent = 'Fase Principal';
+    }
+    if (input.id === 'etapa-subfase-edit') {
+      label.textContent = 'Fase';
+      // Transforma o input texto em select das fases dos dados fixos
+      const fases = ls('fases') || [];
+      const sel = document.createElement('select');
+      sel.id = 'etapa-subfase-edit';
+      sel.className = input.className;
+      sel.innerHTML = '<option value="">— Selecionar fase —</option>' +
+        fases.map(f => `<option value="${f}">${f}</option>`).join('');
+      input.parentNode.replaceChild(sel, input);
+    }
+  });
+})();
+
+// Re-aplica ao abrir o modal de etapa (garante que o select existe)
+const _origEditarEtapaFluxoFix = editarEtapaFluxo;
+editarEtapaFluxo = function(id) {
+  _origEditarEtapaFluxoFix(id);
+  setTimeout(() => {
+    const etapas = ls('etapasFluxo') || [];
+    const e = etapas.find(x => x.id === id);
+    if (!e) return;
+    // Popula o select de subfase
+    const subfaseSel = document.getElementById('etapa-subfase-edit');
+    if (subfaseSel && subfaseSel.tagName === 'SELECT') {
+      const fases = ls('fases') || [];
+      subfaseSel.innerHTML = '<option value="">— Selecionar fase —</option>' +
+        fases.map(f => `<option value="${f}" ${e.subfase===f?'selected':''}>${f}</option>`).join('');
+    }
+  }, 50);
+};
+
+const _origOpenAdicionarEtapaFix = openAdicionarEtapa;
+openAdicionarEtapa = function() {
+  _origOpenAdicionarEtapaFix();
+  setTimeout(() => {
+    const subfaseSel = document.getElementById('etapa-subfase-edit');
+    if (subfaseSel && subfaseSel.tagName !== 'SELECT') {
+      const fases = ls('fases') || [];
+      const sel = document.createElement('select');
+      sel.id = 'etapa-subfase-edit';
+      sel.className = subfaseSel.className;
+      sel.innerHTML = '<option value="">— Selecionar fase —</option>' +
+        fases.map(f => `<option value="${f}">${f}</option>`).join('');
+      subfaseSel.parentNode.replaceChild(sel, subfaseSel);
+    }
+    // Renomeia labels
+    document.querySelectorAll('#modal-etapa-fluxo .field-group').forEach(fg => {
+      const label = fg.querySelector('label');
+      const input = fg.querySelector('select, input');
+      if (!label || !input) return;
+      if (input.id === 'etapa-fase-edit') label.textContent = 'Fase Principal';
+      if (input.id === 'etapa-subfase-edit') label.textContent = 'Fase';
+    });
+  }, 50);
+};
+
+// ── 3. FIX atualizarFaseProcesso: usa e.subfase (não e.fase) ──
+// A fase do processo deve refletir a "Subfase/Categoria" das etapas
+// que é o campo e.subfase (ex: "Confecção de NT/ETP", "Instrução Financeira")
+atualizarFaseProcesso = function(procId) {
+  const processos = ls('processos') || [];
+  const etapas    = ls('etapasFluxo') || [];
+  const idx = processos.findIndex(p => p.id === procId);
+  if (idx < 0) return;
+  const p = processos[idx];
+
+  // Monta mapa: subfase → { iniciadas, concluidas, total }
+  const subfaseMap = {};
+  etapas.forEach(e => {
+    const subfase = e.subfase || e.fase || 'Sem Fase';
+    if (!subfaseMap[subfase]) subfaseMap[subfase] = { iniciadas: 0, concluidas: 0, total: 0, ordem: e.ordem || 99, faseInterna: e.fase };
+    subfaseMap[subfase].total++;
+    const ac = p.acompanhamento?.[e.id] || {};
+    if (ac._concluido) subfaseMap[subfase].concluidas++;
+    else if (ac._iniciado) subfaseMap[subfase].iniciadas++;
+    // Mantém a menor ordem para ordenação
+    if ((e.ordem || 99) < subfaseMap[subfase].ordem) subfaseMap[subfase].ordem = e.ordem || 99;
+  });
+
+  // Fases internas em ordem para desempate
+  const ordemFaseInterna = { planejamento: 0, externa: 1, contratacao: 2 };
+
+  // Identifica subfases em andamento (têm etapas iniciadas mas não todas concluídas)
+  const subfasesEmAndamento = Object.entries(subfaseMap)
+    .filter(([sf, data]) => data.iniciadas > 0 || (data.concluidas > 0 && data.concluidas < data.total))
+    .sort((a,b) => (ordemFaseInterna[a[1].faseInterna]||0) - (ordemFaseInterna[b[1].faseInterna]||0) || a[1].ordem - b[1].ordem);
+
+  // Subfases com TODAS as etapas concluídas
+  const subfasesConcluidas = Object.entries(subfaseMap)
+    .filter(([sf, data]) => data.total > 0 && data.concluidas === data.total)
+    .sort((a,b) => (ordemFaseInterna[b[1].faseInterna]||0) - (ordemFaseInterna[a[1].faseInterna]||0) || b[1].ordem - a[1].ordem);
+
+  let novaFase = processos[idx].fase;
+
+  if (subfasesEmAndamento.length > 1) {
+    // Múltiplas subfases em andamento
+    novaFase = subfasesEmAndamento.map(([sf]) => sf).join(' + ');
+  } else if (subfasesEmAndamento.length === 1) {
+    novaFase = subfasesEmAndamento[0][0];
+  } else if (subfasesConcluidas.length > 0) {
+    // Nenhuma em andamento — mostra a última concluída
+    novaFase = subfasesConcluidas[0][0];
+  }
+  // Se nada iniciado, mantém fase atual ("Aguardando Início")
+
+  if (novaFase !== processos[idx].fase) {
+    processos[idx].fase = novaFase;
+    ls('processos', processos);
+    const faseEl = document.getElementById('detalhe-fase');
+    if (faseEl) faseEl.value = novaFase;
+    console.log(`[GTTRCG] Fase "${processos[idx].nome}" → "${novaFase}"`);
+  }
+};
+
+// ── 4. CONFIG LISTAS: sem limite de 8, com barra de rolagem ─
+// Patch na função renderDadosFixos que limita a 8 itens
+const _origRenderDadosScroll = renderDadosFixos;
+renderDadosFixos = function() {
+  _origRenderDadosScroll();
+  // Remove a limitação de 8 itens e adiciona scroll
+  // Reescreve as listas de unidades e OSS sem o .slice(0,8)
+  ['unidades','oss'].forEach(key => {
+    const data = ls(key) || [];
+    if (data.length === 0) return;
+    const container = document.getElementById('dados-tabs-container');
+    if (!container) return;
+    const sections = container.querySelectorAll('.config-section');
+    sections.forEach(sec => {
+      const btn = sec.querySelector('[onclick*="openAdicionarDadoFixo"]');
+      if (!btn || !btn.getAttribute('onclick').includes(`'${key}'`)) return;
+      const list = sec.querySelector('.config-list');
+      if (!list) return;
+      // Reconstrói sem limite e com scroll
+      const schema = ls('schema_' + key) || [];
+      list.innerHTML = data.map(item => {
+        const d = getItemDisplay(item, key);
+        const mainField = schema.find(f => f.key === 'nome' || f.key === 'sigla' || f.protegido)?.key;
+        const subFields = schema.filter(f => f.key !== mainField).slice(0, 2);
+        const subText = subFields.map(f => item[f.key]).filter(Boolean).join(' · ');
+        return `<div class="config-item">
+          <div class="config-item-text">
+            <div style="font-weight:500">${d.label || '—'}</div>
+            ${subText ? `<div class="config-item-sub">${subText}</div>` : ''}
+          </div>
+          <div class="config-item-actions">
+            <button class="btn sm" onclick="openEditarDadoFixo('${key}','${item.id}')">Editar</button>
+          </div>
+        </div>`;
+      }).join('');
+      // Adiciona scroll
+      list.style.maxHeight = '320px';
+      list.style.overflowY = 'auto';
+      list.style.border = '1px solid var(--border)';
+      list.style.borderRadius = 'var(--radius)';
+    });
+  });
+};
+</script>
