@@ -8218,3 +8218,261 @@ const GTTRCG_CONFIG = {
   }
 })();
 </script>
+<script>
+// ============================================================
+// PATCH FINAL — MELHORIAS MÚLTIPLAS
+// 1. Remove processos hardcoded do initData
+// 2. Novo processo: fase/status padrão + responsável GTTRCG
+// 3. Vigência auto-preenchida da unidade
+// 4. Fase do processo atualizada automaticamente pelas etapas
+// 5. Admin (não master) como membro da equipe
+// ============================================================
+
+// ── 1. LIMPA PROCESSOS HARDCODED DO initData ────────────────
+// Substitui a inicialização de processos por array vazio
+const _origInitDataClean = initData;
+initData = function() {
+  _origInitDataClean();
+  // Se os processos no localStorage são os hardcoded (têm IDs p1,p2,p3...)
+  // e não vieram do Sheets, remove-os
+  const procs = ls('processos') || [];
+  const hardcodedIds = ['p1','p2','p3','p4','p5','p6','p7','p8'];
+  const temHardcoded = procs.some(p => hardcodedIds.includes(p.id));
+  if (temHardcoded && !GSHEET_URL) {
+    // Só limpa se não há Sheets configurado (dados locais de teste)
+    ls('processos', []);
+    renderMonitoramento();
+    updateSidebarCounts();
+    console.log('[GTTRCG] Processos hardcoded removidos ✓');
+  }
+};
+
+// Limpa imediatamente se existirem
+(function limparHardcoded() {
+  const procs = ls('processos') || [];
+  const hardcodedIds = ['p1','p2','p3','p4','p5','p6','p7','p8'];
+  const temHardcoded = procs.some(p => hardcodedIds.includes(p.id));
+  if (temHardcoded) {
+    ls('processos', []);
+    console.log('[GTTRCG] Processos de teste removidos do localStorage ✓');
+  }
+})();
+
+// ── 2. NOVO PROCESSO: fase e status padrão + responsável GTTRCG ──
+const _origOpenNovoProcesso = openNovoProcesso;
+openNovoProcesso = function() {
+  _origOpenNovoProcesso();
+  // Aguarda o modal abrir e seta valores padrão
+  setTimeout(() => {
+    // Status padrão: "Aguardando Início do Processo"
+    const statusEl = document.getElementById('proc-status');
+    if (statusEl) {
+      const opcoes = Array.from(statusEl.options).map(o => o.value);
+      const padrao = opcoes.find(o => o.toLowerCase().includes('aguardando início')) || opcoes[0];
+      if (padrao) statusEl.value = padrao;
+    }
+
+    // Fase padrão: "Aguardando Início" (se existir nos dados fixos)
+    const faseEl = document.getElementById('proc-fase');
+    if (faseEl) {
+      const fases = ls('fases') || [];
+      const fasePadrao = fases.find(f => f.toLowerCase().includes('aguardando')) || fases[0] || '';
+      if (fasePadrao) faseEl.value = fasePadrao;
+    }
+
+    // Responsável GTTRCG padrão
+    const respEl = document.getElementById('proc-responsavel');
+    if (respEl) {
+      // Tenta pre-selecionar o usuário logado como responsável inicial
+      const usuarios = ls('usuarios') || [];
+      const u = APP.currentUser;
+      if (u && respEl.tagName === 'INPUT') {
+        respEl.value = u.nome || u.login;
+      }
+    }
+  }, 100);
+};
+
+// ── 3. AUTO-PREENCHIMENTO DA VIGÊNCIA AO SELECIONAR UNIDADE ──
+const _origAutoFillUnidadeFinal = autoFillUnidade;
+autoFillUnidade = function() {
+  _origAutoFillUnidadeFinal();
+  setTimeout(() => {
+    const nomeSel = document.getElementById('proc-unidade')?.value;
+    if (!nomeSel) return;
+    const unidades = ls('unidades') || [];
+    const u = unidades.find(x => x.nome === nomeSel || x.sigla === nomeSel);
+    if (!u) return;
+
+    // Preenche campos de vigência do contrato
+    const vigInicioEl = document.getElementById('proc-vig-inicio');
+    const vigFimEl    = document.getElementById('proc-vig-fim');
+    const cgEl        = document.getElementById('proc-cg');
+    const ossEl       = document.getElementById('proc-oss');
+    const tipoEl      = document.getElementById('proc-tipo');
+    const macroEl     = document.getElementById('proc-macro');
+    const regiaoEl    = document.getElementById('proc-regiao');
+    const municEl     = document.getElementById('proc-municipio');
+    const porteEl     = document.getElementById('proc-porte');
+
+    if (vigInicioEl && u.cgInicio) vigInicioEl.value = u.cgInicio;
+    if (vigFimEl    && u.cgFim)    vigFimEl.value    = u.cgFim;
+    if (cgEl        && u.cg)       cgEl.value        = u.cg;
+    if (ossEl       && u.ossGestora) ossEl.value     = u.ossGestora;
+    if (tipoEl      && u.tipo)     tipoEl.value      = u.tipo;
+    if (macroEl     && u.macro)    macroEl.value     = u.macro;
+    if (regiaoEl    && u.regiao)   regiaoEl.value    = u.regiao;
+    if (municEl     && u.cidade)   municEl.value     = u.cidade;
+    if (porteEl     && u.porte)    porteEl.value     = u.porte;
+
+    // Infere status do CG
+    if (u.cgFim) {
+      const dias = Math.ceil((new Date(u.cgFim + 'T12:00:00') - new Date()) / 86400000);
+      const scTop = document.getElementById('proc-status-cg-top');
+      const sc    = document.getElementById('proc-status-cg');
+      const val   = dias < 0 ? 'Expirado' : 'Vigente';
+      if (scTop) scTop.value = val;
+      if (sc)    sc.value    = val;
+    }
+  }, 150);
+};
+
+// ── 4. FASE DO PROCESSO ATUALIZADA AUTOMATICAMENTE ──────────
+// Quando uma etapa é marcada como iniciada, atualiza a fase do processo
+const _origMarcarIniciadaFase = marcarEtapaIniciada;
+marcarEtapaIniciada = function(procId, etapaId, checked) {
+  _origMarcarIniciadaFase(procId, etapaId, checked);
+  if (!checked) return;
+  atualizarFaseProcesso(procId);
+};
+
+const _origMarcarConcluidaFase = marcarEtapaConcluida;
+marcarEtapaConcluida = function(procId, etapaId, checked) {
+  _origMarcarConcluidaFase(procId, etapaId, checked);
+  atualizarFaseProcesso(procId);
+};
+
+function atualizarFaseProcesso(procId) {
+  const processos = ls('processos') || [];
+  const etapas    = ls('etapasFluxo') || [];
+  const idx = processos.findIndex(p => p.id === procId);
+  if (idx < 0) return;
+  const p = processos[idx];
+
+  // Ordem das fases internas
+  const ordemFases = { planejamento: 0, externa: 1, contratacao: 2 };
+
+  // Identifica quais fases têm etapas iniciadas (não concluídas)
+  const fasesEmAndamento = new Set();
+  const fasesConcluidas  = new Set();
+
+  etapas.forEach(e => {
+    const ac = p.acompanhamento?.[e.id] || {};
+    const fase = e.fase;
+    if (!fase) return;
+    if (ac._concluido) fasesConcluidas.add(fase);
+    else if (ac._iniciado) fasesEmAndamento.add(fase);
+  });
+
+  // Verifica se todas as etapas de uma fase estão concluídas
+  const todasConcluidas = (fase) => {
+    const etapasFase = etapas.filter(e => e.fase === fase);
+    return etapasFase.length > 0 && etapasFase.every(e => p.acompanhamento?.[e.id]?._concluido);
+  };
+
+  // Remove das emAndamento as fases que têm todas as etapas concluídas
+  [...fasesEmAndamento].forEach(f => {
+    if (todasConcluidas(f)) {
+      fasesEmAndamento.delete(f);
+      fasesConcluidas.add(f);
+    }
+  });
+
+  // Mapeamento fase interna → label da fase nos dados fixos
+  const faseLabels = {
+    planejamento: (ls('fases') || []).find(f => f.toLowerCase().includes('planejamento') || f.toLowerCase().includes('instrução')) || 'Planejamento, Instrução e Correção',
+    externa:      (ls('fases') || []).find(f => f.toLowerCase().includes('externa') || f.toLowerCase().includes('sad')) || 'Externa (SAD)',
+    contratacao:  (ls('fases') || []).find(f => f.toLowerCase().includes('contratação') || f.toLowerCase().includes('contratacao')) || 'Contratação',
+  };
+
+  let novaFase = processos[idx].fase; // mantém atual por padrão
+
+  if (fasesEmAndamento.size > 1) {
+    // Duas ou mais fases em andamento — mostra as duas
+    const labels = [...fasesEmAndamento]
+      .sort((a,b) => (ordemFases[a]||0) - (ordemFases[b]||0))
+      .map(f => faseLabels[f] || f);
+    novaFase = labels.join(' + ');
+  } else if (fasesEmAndamento.size === 1) {
+    // Uma fase em andamento
+    novaFase = faseLabels[[...fasesEmAndamento][0]] || [...fasesEmAndamento][0];
+  } else if (fasesConcluidas.size > 0) {
+    // Nenhuma em andamento — mostra a última concluída
+    const ultimaFase = [...fasesConcluidas]
+      .sort((a,b) => (ordemFases[b]||0) - (ordemFases[a]||0))[0];
+    novaFase = faseLabels[ultimaFase] || ultimaFase;
+  }
+  // Se nada ainda iniciado, mantém "Aguardando Início"
+
+  if (novaFase !== processos[idx].fase) {
+    processos[idx].fase = novaFase;
+    ls('processos', processos);
+    // Atualiza o select de fase no modal de detalhe se estiver aberto
+    const faseEl = document.getElementById('detalhe-fase');
+    if (faseEl) faseEl.value = novaFase;
+    console.log(`[GTTRCG] Fase do processo "${processos[idx].nome}" → "${novaFase}"`);
+  }
+}
+
+// ── 5. ADMIN NÃO-MASTER É MEMBRO DA EQUIPE ──────────────────
+// Redefine getUsuariosAtribuicao para incluir admins (exceto o master)
+getUsuariosAtribuicao = function() {
+  const todos = ls('usuarios') || [];
+  return todos.filter(u => {
+    // Exclui apenas o admin master (login === 'admin')
+    if (u.login === 'admin') return false;
+    // Todos os outros (usuários comuns E admins não-master) são membros
+    return true;
+  });
+};
+
+// ── 6. ALERTAS DE ATRIBUIÇÃO: inclui admins não-master ───────
+// O check de alerta atual filtra curUser.perfil !== 'admin'
+// Precisamos que admins não-master também recebam alertas de suas atribuições
+const _origGerarAlertasEquipe = gerarAlertas;
+gerarAlertas = function() {
+  const base = _origGerarAlertasEquipe();
+  const curUser = APP.currentUser;
+
+  // Admins não-master também recebem alertas de atribuição
+  if (curUser && curUser.perfil === 'admin' && curUser.login !== 'admin') {
+    const processos = ls('processos') || [];
+    const etapas    = ls('etapasFluxo') || [];
+    const hoje = new Date();
+
+    processos.forEach(p => {
+      etapas.forEach(e => {
+        const ac = p.acompanhamento?.[e.id] || {};
+        if (ac._responsavel !== curUser.login || ac._concluido) return;
+        // Evita duplicar alertas já gerados
+        const jaExiste = base.some(a => a._atribuicao && a.pid === p.id && a.etapaId === e.id);
+        if (jaExiste) return;
+        const diasP = ac._prazo ? Math.ceil((new Date(ac._prazo + 'T23:59:59') - hoje) / 86400000) : null;
+        const prazoStr = ac._prazo ? ` — prazo: ${fmtDate(ac._prazo)}` : '';
+        const nivel = diasP !== null && diasP < 0 ? 'urgente' : diasP !== null && diasP <= 7 ? 'atencao' : 'info';
+        base.push({
+          nivel,
+          titulo: `Sua atividade: ${e.nome}`,
+          desc: `Processo "${p.nome}"${prazoStr}`,
+          pid: p.id,
+          etapaId: e.id,
+          _atribuicao: true,
+        });
+      });
+    });
+  }
+  return base;
+};
+
+console.log('[GTTRCG] Patch final carregado ✓');
+</script>
