@@ -8167,3 +8167,54 @@ handlePdfUpload = async function(input, procId, etapaId, campoLabel) {
   }
 };
 </script>
+<script>
+// ============================================================
+// CONFIGURAÇÃO EMBUTIDA NO HTML
+// A URL e o Token ficam aqui no código — não dependem do
+// localStorage de cada computador. Qualquer máquina que abrir
+// o link já tem tudo configurado automaticamente.
+//
+// ╔══════════════════════════════════════════════════════════╗
+// ║  PREENCHA ABAIXO COM SEUS DADOS REAIS                   ║
+// ╚══════════════════════════════════════════════════════════╝
+// ============================================================
+
+const GTTRCG_CONFIG = {
+  appsScriptUrl: 'https://script.google.com/macros/s/AKfycbzFUdwHqCLqvqx2yBWhGJ1iRc7WueKqd2hfQIUPg5R0Db0U8y9pWCQhEwGLmEoi33za/exec',
+  apiToken:      'dgmcg@2025',
+};
+
+// ── Aplica a configuração embutida ──────────────────────────
+// Só sobrescreve se as constantes foram preenchidas
+(function aplicarConfigEmbutida() {
+  const url   = GTTRCG_CONFIG.appsScriptUrl;
+  const token = GTTRCG_CONFIG.apiToken;
+
+  const urlValida   = url   && !url.includes('COLE_AQUI')   && url.includes('script.google.com');
+  const tokenValido = token && !token.includes('COLE_AQUI') && token.length > 3;
+
+  if (urlValida) {
+    localStorage.setItem('gttrcg_apps_script_url', url);
+    GSHEET_URL = url;
+    console.log('[GTTRCG] URL configurada via HTML ✓');
+  }
+
+  if (tokenValido) {
+    localStorage.setItem('gttrcg_api_token', token);
+    GSHEET_TOKEN = token;
+    console.log('[GTTRCG] Token configurado via HTML ✓');
+  }
+
+  if (urlValida && tokenValido) {
+    // Carrega dados do Sheets automaticamente em qualquer PC
+    setTimeout(async () => {
+      const ok = await carregarDoSheets();
+      if (ok) {
+        updateSidebarCounts();
+        renderDashboard();
+        console.log('[GTTRCG] Dados carregados do Sheets automaticamente ✓');
+      }
+    }, 800);
+  }
+})();
+</script>
