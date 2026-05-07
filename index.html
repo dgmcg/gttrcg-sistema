@@ -8693,3 +8693,419 @@ renderDadosFixos = function() {
   });
 };
 </script>
+<script>
+// ============================================================
+// MEGA PATCH — TODAS AS CORREÇÕES
+// 1. Linha do tempo automática em cada processo
+// 2. Sidebar: destaque visual do item ativo + título da view
+// 3. Contratos: filtros, OSS correta, processos emergenciais
+// 4. Config: URL e Importar visíveis só para admin master
+// 5. Campo tipo "Valor (R$)" (moeda)
+// ============================================================
+
+// ── 1. LINHA DO TEMPO AUTOMÁTICA ────────────────────────────
+function gerarLinhaDoTempo(proc) {
+  const etapas = ls('etapasFluxo') || [];
+  if (!etapas.length || !proc.acompanhamento) return null;
+
+  const linhas = [];
+  const hoje = new Date();
+
+  etapas.forEach(e => {
+    const ac = proc.acompanhamento[e.id] || {};
+    const status = ac._concluido ? 'concluida' : ac._iniciado ? 'andamento' : 'pendente';
+    if (status === 'pendente') return; // só mostra iniciadas ou concluídas
+
+    const resp = ac._responsavel ? (() => {
+      const u = (ls('usuarios')||[]).find(x => x.login === ac._responsavel);
+      return u ? u.nome : ac._responsavel;
+    })() : null;
+
+    const iniciadoEm = ac._iniciado_em ? fmtDate(ac._iniciado_em) : null;
+    const concluidoEm = ac._concluido_em ? fmtDate(ac._concluido_em) : null;
+
+    // Duração
+    let duracao = '';
+    if (ac._iniciado_em && ac._concluido_em) {
+      const dias = Math.ceil((new Date(ac._concluido_em) - new Date(ac._iniciado_em)) / 86400000);
+      duracao = `${dias} dia${dias !== 1 ? 's' : ''}`;
+    } else if (ac._iniciado_em) {
+      const dias = Math.ceil((hoje - new Date(ac._iniciado_em)) / 86400000);
+      duracao = `${dias} dia${dias !== 1 ? 's' : ''} em andamento`;
+    }
+
+    // Prazo
+    let prazoInfo = '';
+    if (ac._prazo && !ac._concluido) {
+      const diasP = Math.ceil((new Date(ac._prazo + 'T23:59:59') - hoje) / 86400000);
+      prazoInfo = diasP < 0
+        ? `<span style="color:var(--red2)">⚠ Prazo vencido há ${Math.abs(diasP)}d</span>`
+        : `<span style="color:var(--text3)">Prazo: ${fmtDate(ac._prazo)}</span>`;
+    }
+
+    linhas.push({ e, status, resp, iniciadoEm, concluidoEm, duracao, prazoInfo, ac });
+  });
+
+  return linhas;
+}
+
+function renderLinhaDoTempo(procId) {
+  const processos = ls('processos') || [];
+  const proc = processos.find(p => p.id === procId);
+  if (!proc) return;
+
+  const linhas = gerarLinhaDoTempo(proc);
+  const container = document.getElementById(`timeline-${procId}`);
+  if (!container) return;
+
+  if (!linhas || linhas.length === 0) {
+    container.innerHTML = `<div style="color:var(--text3);font-size:12px;padding:12px">Nenhuma etapa iniciada ainda.</div>`;
+    return;
+  }
+
+  // Estatísticas rápidas
+  const concluidas = linhas.filter(l => l.status === 'concluida').length;
+  const emAndamento = linhas.filter(l => l.status === 'andamento').length;
+  const totalEtapas = (ls('etapasFluxo') || []).length;
+  const progresso = Math.round((concluidas / totalEtapas) * 100);
+
+  // Início do processo
+  const primeiros = linhas.filter(l => l.iniciadoEm).sort((a,b) => a.iniciadoEm < b.iniciadoEm ? -1 : 1);
+  const inicioProc = primeiros.length ? primeiros[0].iniciadoEm : '-';
+
+  // Próxima etapa pendente
+  const etapas = ls('etapasFluxo') || [];
+  const idsComAc = new Set(Object.keys(proc.acompanhamento || {}));
+  const proxEtapa = etapas.find(e => {
+    const ac = proc.acompanhamento?.[e.id] || {};
+    return !ac._concluido;
+  });
+
+  container.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:var(--radius2);overflow:hidden;margin-top:12px">
+      <!-- Cabeçalho resumo -->
+      <div style="background:var(--bg1);border-bottom:1px solid var(--border);padding:10px 14px;display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+        <div style="font-size:12px;font-weight:600;color:var(--text)">📋 Linha do Tempo</div>
+        <div style="font-size:11px;color:var(--text3)">Início: <strong style="color:var(--text2)">${inicioProc}</strong></div>
+        <div style="font-size:11px;color:var(--text3)">${concluidas} etapa${concluidas!==1?'s':''} concluída${concluidas!==1?'s':''}</div>
+        <div style="font-size:11px;color:var(--text3)">${emAndamento} em andamento</div>
+        ${proxEtapa ? `<div style="font-size:11px;color:var(--accent2)">▶ Próxima: ${proxEtapa.nome}</div>` : ''}
+        <div style="margin-left:auto;font-size:11px;color:var(--text3)">Progresso: <strong style="color:var(--green)">${progresso}%</strong></div>
+      </div>
+      <!-- Linhas -->
+      <div style="max-height:320px;overflow-y:auto">
+        ${linhas.map((l, idx) => {
+          const cor = l.status === 'concluida' ? 'var(--green)' : 'var(--accent2)';
+          const icone = l.status === 'concluida' ? '✅' : '⏳';
+          const bg = idx % 2 === 0 ? 'var(--bg2)' : 'var(--bg1)';
+          return `<div style="display:flex;gap:12px;align-items:flex-start;padding:8px 14px;background:${bg};border-bottom:1px solid var(--border)">
+            <div style="font-size:14px;margin-top:1px;flex-shrink:0">${icone}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.e.nome}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
+                ${l.e.subfase ? `<span style="color:var(--text3)">${l.e.subfase}</span>` : ''}
+                ${l.resp ? `<span>👤 ${l.resp}</span>` : ''}
+                ${l.iniciadoEm ? `<span>▶ ${l.iniciadoEm}</span>` : ''}
+                ${l.concluidoEm ? `<span style="color:var(--green)">✓ ${l.concluidoEm}</span>` : ''}
+                ${l.duracao ? `<span style="color:${cor}">⏱ ${l.duracao}</span>` : ''}
+                ${l.prazoInfo}
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <!-- Rodapé -->
+      <div style="background:var(--bg1);border-top:1px solid var(--border);padding:8px 14px;font-size:11px;color:var(--text3)">
+        Atualizado automaticamente conforme o acompanhamento das etapas · ${new Date().toLocaleString('pt-BR')}
+      </div>
+    </div>`;
+}
+
+// Injeta seção de linha do tempo ao abrir processo
+const _origAbrirProcessoTimeline = abrirProcesso;
+abrirProcesso = function(procId) {
+  _origAbrirProcessoTimeline(procId);
+  setTimeout(() => {
+    const container = document.getElementById(`timeline-${procId}`);
+    if (!container) {
+      // Cria o container após o cabeçalho do processo
+      const header = document.querySelector('.processo-header, .detalhe-header, #detalhe-topo');
+      if (header) {
+        const div = document.createElement('div');
+        div.id = `timeline-${procId}`;
+        header.after(div);
+        renderLinhaDoTempo(procId);
+      }
+    } else {
+      renderLinhaDoTempo(procId);
+    }
+  }, 200);
+};
+
+// Atualiza timeline quando etapa é salva
+const _origSalvarAcompTimeline = salvarAcompanhamento;
+salvarAcompanhamento = function(procId, etapaId) {
+  _origSalvarAcompTimeline(procId, etapaId);
+  setTimeout(() => renderLinhaDoTempo(procId), 300);
+};
+
+// ── 2. SIDEBAR: destaque visual + título da view ─────────────
+const _origShowPageSidebar = showPage;
+showPage = function(id, sidebarLabel) {
+  _origShowPageSidebar(id);
+  atualizarSidebarAtivo(id, sidebarLabel);
+  atualizarTituloView(id, sidebarLabel);
+};
+
+function atualizarSidebarAtivo(pageId, label) {
+  document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+  // Ativa o item correto
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    const oc = el.getAttribute('onclick') || '';
+    if (oc.includes(`'${pageId}'`) && !oc.includes('filterSidebar')) {
+      el.classList.add('active');
+    }
+  });
+}
+
+let _sidebarFiltroAtivo = '';
+let _sidebarFiltroLabel = 'Todos os Processos';
+
+function atualizarTituloView(pageId, label) {
+  const titles = {
+    dashboard: 'Painel de Controle',
+    monitoramento: 'Monitoramento de Processos',
+    fluxo: 'Fluxo do Processo',
+    alertas: 'Alertas e Notificações',
+    contratos: 'Contratos de Gestão',
+    configuracoes: 'Configurações do Sistema',
+  };
+  const base = titles[pageId] || pageId;
+  const sub = label || (pageId === 'monitoramento' ? _sidebarFiltroLabel : '');
+  const titulo = sub ? `${base} — ${sub}` : base;
+
+  // Atualiza o title do browser
+  document.title = `GTTRCG · ${titulo}`;
+
+  // Atualiza breadcrumb/título se existir
+  let bc = document.getElementById('view-breadcrumb');
+  if (!bc) {
+    bc = document.createElement('div');
+    bc.id = 'view-breadcrumb';
+    bc.style.cssText = 'font-size:13px;color:var(--text3);padding:8px 20px 0;font-weight:400';
+    const content = document.getElementById('content') || document.querySelector('.pages-container');
+    if (content) content.prepend(bc);
+  }
+  bc.textContent = titulo;
+}
+
+// Intercepta os filtros da sidebar para ativar o item correto e atualizar título
+const _origFilterSidebarStatus = filterSidebarStatus;
+filterSidebarStatus = function(status) {
+  _origFilterSidebarStatus(status);
+  const labels = {
+    em_andamento: 'Em Andamento',
+    remetido: 'Remetidos à SAD',
+    aguardando: 'Aguardando',
+    ag_assinatura: 'Ag. Assinatura',
+  };
+  _sidebarFiltroLabel = labels[status] || status;
+  // Marca o item ativo na sidebar
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.remove('active');
+    const oc = el.getAttribute('onclick') || '';
+    if (oc.includes(`filterSidebarStatus('${status}')`)) el.classList.add('active');
+  });
+  atualizarTituloView('monitoramento', _sidebarFiltroLabel);
+};
+
+const _origFilterSidebarTipo = filterSidebarTipo;
+filterSidebarTipo = function(tipo) {
+  _origFilterSidebarTipo(tipo);
+  _sidebarFiltroLabel = tipo + 's';
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.remove('active');
+    const oc = el.getAttribute('onclick') || '';
+    if (oc.includes(`filterSidebarTipo('${tipo}')`)) el.classList.add('active');
+  });
+  atualizarTituloView('monitoramento', tipo + 's');
+};
+
+const _origFilterSidebarFavs = filterSidebarFavoritos;
+filterSidebarFavoritos = function() {
+  _origFilterSidebarFavs();
+  _sidebarFiltroLabel = 'Favoritos';
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.remove('active');
+    const oc = el.getAttribute('onclick') || '';
+    if (oc.includes('filterSidebarFavoritos')) el.classList.add('active');
+  });
+  atualizarTituloView('monitoramento', 'Favoritos');
+};
+
+// Clique em "Todos os Processos" na sidebar
+document.querySelectorAll('.sidebar-item').forEach(el => {
+  const oc = el.getAttribute('onclick') || '';
+  if (oc.includes("showPage('monitoramento')")) {
+    el.setAttribute('onclick', el.getAttribute('onclick').replace(
+      "showPage('monitoramento')",
+      "showPage('monitoramento'); _sidebarFiltroLabel='Todos os Processos'; atualizarTituloView('monitoramento','Todos os Processos'); limparFiltrosSidebar()"
+    ));
+  }
+});
+
+function limparFiltrosSidebar() {
+  document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+  const el = document.querySelector('.sidebar-item[onclick*="showPage(\'monitoramento\')"]');
+  if (el) el.classList.add('active');
+}
+
+// CSS para sidebar item ativo (estilo consistente com nav-item)
+const styleEl = document.createElement('style');
+styleEl.textContent = `
+  .sidebar-item.active {
+    background: var(--accent2) !important;
+    color: #fff !important;
+    border-radius: var(--radius) !important;
+  }
+  .sidebar-item.active svg, .sidebar-item.active .badge {
+    color: #fff !important;
+    opacity: 1 !important;
+  }
+  #view-breadcrumb {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    padding: 16px 20px 0;
+    letter-spacing: -0.01em;
+  }
+`;
+document.head.appendChild(styleEl);
+
+// ── 3. CONTRATOS: filtros, OSS correta, emergenciais ────────
+renderContratosTable = function(data) {
+  const tbody = document.getElementById('contratos-tbody');
+  const empty = document.getElementById('contratos-empty');
+  const prazo = ls('prazoAlerta') || 18;
+  if (!tbody) return;
+  if (data.length === 0) { tbody.innerHTML = ''; if(empty) empty.style.display = 'block'; return; }
+  if(empty) empty.style.display = 'none';
+
+  // Busca processos emergenciais para indicar na tabela
+  const processos = ls('processos') || [];
+  const emergs = new Set(processos.filter(p =>
+    (p.tipoProcesso||'').toLowerCase().includes('emergencial')
+  ).map(p => p.nome));
+
+  tbody.innerHTML = data.map(u => {
+    const cor = u.diasFim < 0 ? 'var(--red2)' : u.diasFim < prazo*30 ? 'var(--yellow2)' : u.diasFim < 365 ? 'var(--accent2)' : 'var(--green)';
+    const diasLabel = u.diasFim < 0 ? `Expirado (${Math.abs(u.diasFim)}d)` : `${u.diasFim}d / ${u.mesesFim}m / ${u.anosFim}a`;
+    const vig2Label = u.diasVig2 !== null ? (u.diasVig2 < 0 ? `<span style="color:var(--red2)">Venc. (${Math.abs(u.diasVig2)}d)</span>` : `${u.diasVig2}d / ${u.mesesVig2}m`) : '-';
+    const prevCor = u.diasParaPrevisao < 0 ? 'var(--red2)' : u.diasParaPrevisao < 60 ? 'var(--yellow2)' : 'var(--text2)';
+    const prevLabel = u.previsaoDate ? `<span style="color:${prevCor}">${fmtDate(u.previsaoDate)}${u.diasParaPrevisao < 0 ? ' ⚠' : ''}</span>` : '-';
+    const scBadge = u.statusCG === 'Vigente' ? 'green' : u.statusCG === 'Expirado' ? 'red' : 'yellow';
+    // OSS CORRETA: ossGestora do cadastro da unidade
+    const ossLabel = u.ossGestora || '-';
+    const isEmerg = emergs.has(u.nome);
+
+    return `<tr onclick="openEditarDadoFixo('unidades','${u.id}')" style="cursor:pointer">
+      <td>
+        <div class="td-name">${u.nome}${isEmerg ? ' <span style="font-size:10px;background:rgba(243,156,18,.2);color:var(--yellow2);padding:1px 5px;border-radius:3px;vertical-align:middle">Emerg.</span>' : ''}</div>
+        <div class="td-sub">${u.cidade || ''}</div>
+      </td>
+      <td><span class="badge ${tipoBadge(u.tipo)}">${u.tipo || '-'}</span></td>
+      <td style="font-size:12px;color:var(--text3)">${u.cg || '-'}</td>
+      <td style="font-size:12px;color:var(--text2);font-weight:500">${ossLabel}</td>
+      <td style="font-family:var(--mono);font-size:12px">${fmtDate(u.cgFim)}</td>
+      <td style="font-size:12px">${vig2Label}</td>
+      <td>${prevLabel}</td>
+      <td><span style="font-weight:600;color:${cor};font-family:var(--mono);font-size:12px">${diasLabel}</span></td>
+      <td><span class="badge ${scBadge}">${u.statusCG}</span></td>
+    </tr>`;
+  }).join('');
+};
+
+// Fix filtros contratos: aciona renderContratos ao mudar
+setTimeout(() => {
+  ['contratos-search','contratos-tipo','contratos-status'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.oninput = el.onchange = () => renderContratos();
+  });
+}, 500);
+
+// ── 4. CONFIG: URL e Importar visíveis só para admin master ──
+const _origRenderConfigMaster = renderConfiguracoes;
+renderConfiguracoes = function() {
+  _origRenderConfigMaster();
+  setTimeout(() => {
+    const isMaster = APP.currentUser?.login === 'admin';
+    // Esconde seção de URL do Apps Script para não-master
+    const urlSec = document.getElementById('apps-script-url-section');
+    if (urlSec) urlSec.style.display = isMaster ? '' : 'none';
+    // Esconde aba de importar dados para não-master
+    document.querySelectorAll('.tab[data-tab="importar"]').forEach(t => {
+      t.style.display = isMaster ? '' : 'none';
+    });
+    document.querySelectorAll('#tab-importar').forEach(t => {
+      if (!isMaster) t.style.display = 'none';
+    });
+  }, 200);
+};
+
+// ── 5. CAMPO TIPO "VALOR (R$)" — moeda ──────────────────────
+// Adiciona a opção em todos os selects de tipo de campo
+(function addMoedaOption() {
+  const addToSelect = (sel) => {
+    if (!sel || sel.querySelector('option[value="moeda"]')) return;
+    const opt = document.createElement('option');
+    opt.value = 'moeda';
+    opt.textContent = '💰 Valor (R$)';
+    sel.appendChild(opt);
+  };
+
+  // Select de novo campo nas configurações
+  const newFieldTipo = document.getElementById('new-field-tipo');
+  addToSelect(newFieldTipo);
+
+  // Select de campo em etapas do fluxo (renderizado dinamicamente)
+  const observer = new MutationObserver(() => {
+    document.querySelectorAll('select[id^="mfc-new-tipo"], select[id="new-field-tipo"]').forEach(addToSelect);
+    // Selects de tipo nos campos existentes das etapas
+    document.querySelectorAll('select.campo-tipo-sel').forEach(addToSelect);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+})();
+
+// Renderização de campo tipo moeda
+const _origRenderCampoEtapa = renderCampoEtapa;
+if (typeof renderCampoEtapa === 'function') {
+  renderCampoEtapa = function(c, etapa, procId) {
+    if (c.tipo === 'moeda') {
+      const id = `ef_${etapa.id}_${c.label.replace(/\s+/g,'_')}`;
+      const ac = (ls('processos')||[]).find(p=>p.id===procId)?.acompanhamento?.[etapa.id] || {};
+      const val = ac[c.label] || '';
+      return `<div class="field-group">
+        <label>${c.label}</label>
+        <div style="position:relative">
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none">R$</span>
+          <input type="number" id="${id}" step="0.01" min="0"
+            style="padding-left:30px"
+            value="${val}"
+            onchange="salvarCampoEtapa('${procId}','${etapa.id}','${c.label}',parseFloat(this.value)||0)"
+            placeholder="0,00">
+        </div>
+      </div>`;
+    }
+    return _origRenderCampoEtapa(c, etapa, procId);
+  };
+}
+
+// Formatação de valor moeda na exibição
+function fmtMoeda(val) {
+  if (!val && val !== 0) return '';
+  return Number(val).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+console.log('[GTTRCG] Mega patch carregado ✓');
+</script>
