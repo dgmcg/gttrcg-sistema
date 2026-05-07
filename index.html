@@ -8821,32 +8821,30 @@ function renderLinhaDoTempo(procId) {
     </div>`;
 }
 
-// Injeta seção de linha do tempo ao abrir processo
-const _origAbrirProcessoTimeline = abrirProcesso;
-abrirProcesso = function(procId) {
-  _origAbrirProcessoTimeline(procId);
+// Injeta linha do tempo ao abrir processo (openDetalhe é o nome correto)
+const _origOpenDetalheTimeline = openDetalhe;
+openDetalhe = function(procId) {
+  _origOpenDetalheTimeline(procId);
   setTimeout(() => {
-    const container = document.getElementById(`timeline-${procId}`);
+    // detalhe-body é o container do modal — insere timeline no início
+    const body = document.getElementById('detalhe-body');
+    if (!body) return;
+    let container = document.getElementById(`timeline-${procId}`);
     if (!container) {
-      // Cria o container após o cabeçalho do processo
-      const header = document.querySelector('.processo-header, .detalhe-header, #detalhe-topo');
-      if (header) {
-        const div = document.createElement('div');
-        div.id = `timeline-${procId}`;
-        header.after(div);
-        renderLinhaDoTempo(procId);
-      }
-    } else {
-      renderLinhaDoTempo(procId);
+      container = document.createElement('div');
+      container.id = `timeline-${procId}`;
+      body.prepend(container);
     }
-  }, 200);
+    renderLinhaDoTempo(procId);
+  }, 300);
 };
 
-// Atualiza timeline quando etapa é salva
+// Atualiza timeline quando acompanhamento é salvo
 const _origSalvarAcompTimeline = salvarAcompanhamento;
-salvarAcompanhamento = function(procId, etapaId) {
-  _origSalvarAcompTimeline(procId, etapaId);
-  setTimeout(() => renderLinhaDoTempo(procId), 300);
+salvarAcompanhamento = function() {
+  _origSalvarAcompTimeline();
+  const procId = APP.currentProcessoId;
+  if (procId) setTimeout(() => renderLinhaDoTempo(procId), 400);
 };
 
 // ── 2. SIDEBAR: destaque visual + título da view ─────────────
