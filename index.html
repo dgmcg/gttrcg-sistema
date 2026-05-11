@@ -1103,14 +1103,10 @@ const APP = {
 // ============================================================
 function initData() {
   if (!ls('usuarios')) {
+    // Apenas o admin master como usuário inicial
+    // Os demais usuários são gerenciados pelo admin e armazenados no Sheets
     ls('usuarios', [
       { id: 'u1', nome: 'Administrador', login: 'admin', senha: '123', perfil: 'admin' },
-      { id: 'u2', nome: 'Danilo', login: 'danilo', senha: '123', perfil: 'usuario' },
-      { id: 'u3', nome: 'Mayara', login: 'mayara', senha: '123', perfil: 'usuario' },
-      { id: 'u4', nome: 'Lindemberg', login: 'lindemberg', senha: '123', perfil: 'usuario' },
-      { id: 'u5', nome: 'Matheus', login: 'matheus', senha: '123', perfil: 'usuario' },
-      { id: 'u6', nome: 'Sheila', login: 'sheila', senha: '123', perfil: 'usuario' },
-      { id: 'u7', nome: 'Ivson', login: 'ivson', senha: '123', perfil: 'admin' },
     ]);
   }
   if (!ls('unidades')) {
@@ -2847,7 +2843,26 @@ function showToast(msg) {
 // ============================================================
 // INICIALIZAÇÃO
 // ============================================================
-initData();
+// initData() só roda se NÃO há Sheets configurado
+// Se há Sheets, os dados virão de lá via carregarDoSheets()
+// Isso evita que os dados hardcoded sobrescrevam o banco real
+const _sheetsUrlAtInit = localStorage.getItem('gttrcg_apps_script_url') ||
+  (typeof GTTRCG_CONFIG !== 'undefined' && !GTTRCG_CONFIG.appsScriptUrl.includes('COLE_AQUI') ? GTTRCG_CONFIG.appsScriptUrl : '');
+if (!_sheetsUrlAtInit) {
+  // Sem Sheets: inicializa com dados padrão (primeiro uso)
+  initData();
+} else {
+  // Com Sheets: inicializa só o admin padrão se não houver nenhum usuário ainda
+  // O restante dos dados vem do Sheets
+  if (!ls('usuarios')) {
+    const h = async () => {
+      const sha = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('123'));
+      const hex = Array.from(new Uint8Array(sha)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      ls('usuarios', [{ id:'u1', nome:'Administrador', login:'admin', senha:`sha256:${hex}`, perfil:'admin' }]);
+    };
+    h();
+  }
+}
 updateSidebarCounts();
 </script>
 <script>
@@ -7134,12 +7149,17 @@ async function carregarDoSheets() {
       return false;
     }
     // Importa cada chave do Sheets para o localStorage
+    // NUNCA sobrescreve com dados vazios — protege usuários e dados reais
     let importados = 0;
+    const CHAVES_CRITICAS = ['usuarios']; // nunca sobrescreve com menos de 1 item
     Object.entries(data).forEach(([key, val]) => {
-      if (val !== null && val !== undefined) {
-        localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
-        importados++;
-      }
+      if (val === null || val === undefined) return;
+      if (Array.isArray(val) && val.length === 0) return; // ignora arrays vazios
+      if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) return;
+      // Para chaves críticas, só importa se tiver dados reais (>= 1 item)
+      if (CHAVES_CRITICAS.includes(key) && Array.isArray(val) && val.length < 1) return;
+      localStorage.setItem('gttrcg_' + key, JSON.stringify(val));
+      importados++;
     });
     showSyncBadge('ok');
     console.log(`[GTTRCG Sheets] ${importados} coleções carregadas`);
@@ -7266,8 +7286,9 @@ async function iniciarSincronizacao() {
   addSyncButtonReal();
   const ok = await carregarDoSheets();
   if (ok) {
-    // Recarrega dados na view atual
-    initData();
+    // NÃO chama initData() aqui — carregarDoSheets já preencheu o localStorage
+    // initData() só deve rodar com localStorage vazio (primeiro acesso sem Sheets)
+    // Chamar initData() aqui causaria sobrescrita dos dados reais com os hardcoded
     updateSidebarCounts();
     const activePage = document.querySelector('.page.active')?.id?.replace('page-','');
     if (activePage) showPage(activePage);
