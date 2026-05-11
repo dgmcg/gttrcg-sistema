@@ -1204,6 +1204,8 @@ function initData() {
       { key:'cnpjOss',       label:'CNPJ da OSS Gestora',           tipo:'text',  protegido:false },
       { key:'porte',         label:'Porte',                         tipo:'text',  protegido:false },
       { key:'leitos',        label:'N° de Leitos',                  tipo:'text',  protegido:false },
+      { key:'statusCG',      label:'Status do C.G',                 tipo:'listafixo', listaFonte:'statusContrato', protegido:false },
+      { key:'repasse',       label:'Repasse Mensal (R$)',            tipo:'moeda', protegido:false },
     ]);
   }
   if (!ls('schema_oss')) {
@@ -2840,6 +2842,34 @@ document.addEventListener('change', function(e) {
     if (p.progresso !== pct) { p.progresso = pct; changed = true; }
   });
   if (changed) ls('processos', processos);
+})();
+</script>
+
+<script>
+// ── Garante que os novos campos existem no schema_unidades ───
+(function patchSchemaUnidades() {
+  const schema = ls('schema_unidades');
+  if (!schema || !Array.isArray(schema)) return;
+  
+  let modified = false;
+  
+  // Adiciona statusCG se não existir
+  if (!schema.find(f => f.key === 'statusCG')) {
+    schema.push({ key:'statusCG', label:'Status do C.G', tipo:'listafixo', listaFonte:'statusContrato', protegido:false });
+    modified = true;
+  }
+  
+  // Adiciona repasse se não existir
+  if (!schema.find(f => f.key === 'repasse')) {
+    schema.push({ key:'repasse', label:'Repasse Mensal (R$)', tipo:'moeda', protegido:false });
+    modified = true;
+  }
+  
+  if (modified) {
+    // Salva sem disparar sync para não sobrecarregar (só localStorage)
+    localStorage.setItem('gttrcg_schema_unidades', JSON.stringify(schema));
+    console.log('[GTTRCG] Schema unidades atualizado com statusCG e repasse ✓');
+  }
 })();
 </script>
 </body>
@@ -9378,4 +9408,137 @@ function switchCtTab(tabId, el) {
 }
 
 console.log('[GTTRCG] Contratos reescrito ✓');
+</script>
+<script>
+// ── Corrige buildCtRow para usar statusCG do cadastro da unidade ──
+buildCtRow = function(u) {
+  const diasLabel = u.diasFim === null ? '-'
+    : u.diasFim < 0 ? `<span style="color:var(--red2)">${u.diasFim}d / ${Math.abs(u.mesesFim)}m</span>`
+    : `${u.diasFim}d / ${u.mesesFim}m / ${u.anosFim}a`;
+
+  const vig2Label = u.diasVig2 === null ? '-'
+    : `${fmtDate(u.vigencia2anos)} <small style="color:${u.diasVig2<0?'var(--red2)':'var(--text3)'}">(${u.diasVig2<0?'Venc. há ':'+'}${Math.abs(u.diasVig2)}d)</small>`;
+
+  const prevCor  = u.diasParaPrevisao === null ? '' : u.diasParaPrevisao < 0 ? 'var(--red2)' : u.diasParaPrevisao < 60 ? 'var(--yellow2)' : '';
+  const prevLabel = u.previsaoDate
+    ? `<span style="color:${prevCor}">${fmtDate(u.previsaoDate.toISOString().slice(0,10))}${u.diasParaPrevisao < 0 ? ' ⚠' : ''}</span>`
+    : '-';
+
+  // Status do C.G — vem diretamente do campo cadastrado na unidade
+  const statusCGLabel = u.statusCG || '-';
+
+  // OSS sigla
+  const ossLabel = u.ossSigla || u.ossGestora || '-';
+
+  return `<tr>
+    <td>
+      <div style="font-weight:500;font-size:13px">${u.nome}</div>
+      <div style="font-size:11px;color:var(--text3)">${u.cidade || ''}</div>
+      <div style="margin-top:3px">${statusBadgeHtml(statusCGLabel)}</div>
+    </td>
+    <td><span class="badge ${tipoBadge(u.tipo)}">${u.tipo || '-'}</span></td>
+    <td style="font-weight:600;font-size:12px">${ossLabel}</td>
+    <td style="font-family:var(--mono);font-size:12px">${u.cg || '-'}</td>
+    <td style="font-family:var(--mono);font-size:12px">${fmtDate(u.cgFim)}</td>
+    <td style="font-size:12px">${vig2Label}</td>
+    <td style="font-size:12px">${prevLabel}</td>
+    <td style="font-family:var(--mono);font-size:12px">${diasLabel}</td>
+    <td>${statusBadgeHtml(u.statusGeral)}</td>
+  </tr>`;
+};
+
+// ── Renderização do campo tipo moeda nos formulários de dados fixos ──
+// Patch no renderCampoFormDadoFixo para suportar tipo 'moeda'
+const _origRenderCampoForm = renderCampoFormDadoFixo;
+if (typeof renderCampoFormDadoFixo === 'function') {
+  renderCampoFormDadoFixo = function(campo, valor) {
+    if (campo.tipo === 'moeda') {
+      const v = valor !== undefined && valor !== '' ? Number(valor) : '';
+      return `<div class="field-group">
+        <label>${campo.label}${campo.protegido ? ' <span class="badge">obrigatório</span>' : ''}</label>
+        <div style="position:relative">
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none">R$</span>
+          <input type="number" name="${campo.key}" step="0.01" min="0"
+            style="padding-left:30px"
+            value="${v}"
+            placeholder="0,00">
+        </div>
+      </div>`;
+    }
+    if (campo.tipo === 'listafixo' && campo.listaFonte) {
+      const lista = ls(campo.listaFonte) || [];
+      const options = lista.map(item => {
+        const label = typeof item === 'string' ? item : (item.sigla || item.nome || item.valor || '');
+        const selected = label === valor ? 'selected' : '';
+        return `<option value="${label}" ${selected}>${label}</option>`;
+      }).join('');
+      return `<div class="field-group">
+        <label>${campo.label}</label>
+        <select name="${campo.key}">
+          <option value="">— Selecionar —</option>
+          ${options}
+        </select>
+      </div>`;
+    }
+    return _origRenderCampoForm(campo, valor);
+  };
+}
+
+// ── Patch: abre formulário de edição de unidade com campos moeda e listafixo ──
+// Garante que openEditarDadoFixo('unidades', id) renderiza corretamente
+const _origOpenEditarDadoFixoMoeda = openEditarDadoFixo;
+openEditarDadoFixo = function(key, id) {
+  _origOpenEditarDadoFixoMoeda(key, id);
+  // Após renderizar, garante que selects de listafixo têm o valor correto
+  setTimeout(() => {
+    const schema = ls('schema_' + key) || [];
+    const data   = ls(key) || [];
+    const item   = data.find(x => x.id === id);
+    if (!item) return;
+    schema.forEach(campo => {
+      if (campo.tipo === 'listafixo') {
+        const sel = document.querySelector(`[name="${campo.key}"]`);
+        if (sel && item[campo.key]) sel.value = item[campo.key];
+      }
+    });
+  }, 100);
+};
+
+// ── Patch openAdicionarDadoFixo para campos moeda/listafixo ──
+const _origOpenAdicionarDadoFixoMoeda = openAdicionarDadoFixo;
+openAdicionarDadoFixo = function(key) {
+  _origOpenAdicionarDadoFixoMoeda(key);
+};
+
+// ── Exibição do repasse nos itens da lista de unidades ────────
+// Sobrescreve getItemDisplay para incluir repasse formatado
+const _origGetItemDisplayRepasse = getItemDisplay;
+getItemDisplay = function(item, key) {
+  const result = _origGetItemDisplayRepasse(item, key);
+  if (key === 'unidades' && item.repasse) {
+    result.sub = result.sub || '';
+  }
+  return result;
+};
+
+// ── Auto-fill: quando usuário seleciona unidade no novo processo,
+//    preenche statusCG do campo Status do C.G ─────────────────
+const _origAutoFillStatusCG = autoFillUnidade;
+autoFillUnidade = function() {
+  _origAutoFillStatusCG();
+  setTimeout(() => {
+    const nomeSel = document.getElementById('proc-unidade')?.value;
+    if (!nomeSel) return;
+    const unidades = ls('unidades') || [];
+    const u = unidades.find(x => x.nome === nomeSel || x.sigla === nomeSel);
+    if (!u || !u.statusCG) return;
+    // Preenche o select de status do CG no modal do processo
+    const scEl = document.getElementById('proc-status-cg-top');
+    if (scEl) scEl.value = u.statusCG;
+    const sc2El = document.getElementById('proc-status-cg');
+    if (sc2El) sc2El.value = u.statusCG;
+  }, 200);
+};
+
+console.log('[GTTRCG] statusCG + repasse + moeda carregados ✓');
 </script>
