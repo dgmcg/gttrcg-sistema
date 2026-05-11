@@ -9033,29 +9033,7 @@ renderConfiguracoes = function() {
   observer.observe(document.body, { childList: true, subtree: true });
 })();
 
-// Renderização de campo tipo moeda
-const _origRenderCampoEtapa = renderCampoEtapa;
-if (typeof renderCampoEtapa === 'function') {
-  renderCampoEtapa = function(c, etapa, procId) {
-    if (c.tipo === 'moeda') {
-      const id = `ef_${etapa.id}_${c.label.replace(/\s+/g,'_')}`;
-      const ac = (ls('processos')||[]).find(p=>p.id===procId)?.acompanhamento?.[etapa.id] || {};
-      const val = ac[c.label] || '';
-      return `<div class="field-group">
-        <label>${c.label}</label>
-        <div style="position:relative">
-          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none">R$</span>
-          <input type="number" id="${id}" step="0.01" min="0"
-            style="padding-left:30px"
-            value="${val}"
-            onchange="salvarCampoEtapa('${procId}','${etapa.id}','${c.label}',parseFloat(this.value)||0)"
-            placeholder="0,00">
-        </div>
-      </div>`;
-    }
-    return _origRenderCampoEtapa(c, etapa, procId);
-  };
-}
+// [renderCampoEtapa removido — função não existe no código base]
 
 // Formatação de valor moeda na exibição
 function fmtMoeda(val) {
