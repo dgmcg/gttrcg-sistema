@@ -2492,7 +2492,20 @@ function excluirCampoSchema(idx) {
 // ── getCatConfig agora lê o schema dinâmico ─────────────────
 function getCatConfig(key) {
   if (key === 'unidades' || key === 'oss') {
-    const schema = ls('schema_' + key);
+    let schema = ls('schema_' + key);
+    // Garante que os campos novos existem no schema (migração automática)
+    if (schema && Array.isArray(schema)) {
+      let changed = false;
+      if (!schema.find(f => f.key === 'statusCG')) {
+        schema.push({ key:'statusCG', label:'Status do C.G', tipo:'listafixo', listaFonte:'statusContrato', protegido:false });
+        changed = true;
+      }
+      if (!schema.find(f => f.key === 'repasse')) {
+        schema.push({ key:'repasse', label:'Repasse Mensal (R$)', tipo:'moeda', protegido:false });
+        changed = true;
+      }
+      if (changed) localStorage.setItem('gttrcg_schema_' + key, JSON.stringify(schema));
+    }
     if (schema) return { fields: schema.map(f => f.key), schema };
     // Fallback se schema ainda não foi inicializado
     const defaults = {
