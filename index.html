@@ -1657,7 +1657,7 @@ function openNovoProcesso() {
   APP.currentProcessoId = null;
   document.getElementById('modal-processo-title').textContent = 'Novo Processo';
   document.getElementById('proc-id').value = '';
-  ['proc-unidade','proc-tipo','proc-oss','proc-cg','proc-sei','proc-tipoProcesso','proc-macro','proc-regiao','proc-municipio','proc-porte','proc-area-nt','proc-responsavel','proc-obs','proc-vig-inicio','proc-vig-fim'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['proc-unidade','proc-tipo','proc-oss','proc-cg','proc-sei','proc-tipoProcesso','proc-macro','proc-regiao','proc-municipio','proc-porte','proc-area-nt','proc-obs','proc-vig-inicio','proc-vig-fim'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('proc-inicio').value = new Date().toISOString().split('T')[0];
   populateModalSelects();
   openModal('modal-processo');
@@ -1682,7 +1682,11 @@ function openEditarProcesso(id, fromDetalhe) {
     document.getElementById('proc-municipio').value = p.municipio || '';
     document.getElementById('proc-porte').value = p.porte || '';
     document.getElementById('proc-area-nt').value = p.areaNT || '';
-    document.getElementById('proc-responsavel').value = p.responsavel || '';
+    // proc-responsavel may be select (rebuilt on populateModalSelects)
+  setTimeout(() => {
+    const respEl = document.getElementById('proc-responsavel');
+    if (respEl) respEl.value = p.responsavel || '';
+  }, 80);
     document.getElementById('proc-inicio').value = p.inicio || '';
     document.getElementById('proc-previsao').value = p.previsao || '';
     document.getElementById('proc-status').value = p.status || '';
@@ -1719,6 +1723,18 @@ function populateModalSelects() {
   document.getElementById('proc-status-cg').innerHTML = '<option value="">-</option>' + scList.map(s => `<option>${s}</option>`).join('');
   const scTopEl = document.getElementById('proc-status-cg-top');
   if (scTopEl) scTopEl.innerHTML = '<option value="">Selecionar...</option>' + scList.map(s => `<option>${s}</option>`).join('');
+
+  // Responsável GTTRCG — substitui input por select de membros da equipe
+  const respContainer = document.getElementById('proc-responsavel-container');
+  if (respContainer) {
+    const usuarios = typeof getUsuariosAtribuicao === 'function'
+      ? getUsuariosAtribuicao()
+      : (ls('usuarios') || []).filter(u => u.login !== 'admin');
+    respContainer.innerHTML = '<select id="proc-responsavel" class="w-full">' +
+      '<option value="">— Selecionar responsável —</option>' +
+      usuarios.map(u => `<option value="${u.login}">${u.nome || u.login}</option>`).join('') +
+      '</select>';
+  }
 }
 
 function autoFillUnidade() {
@@ -1788,7 +1804,7 @@ function salvarProcesso() {
     municipio: document.getElementById('proc-municipio').value,
     porte: document.getElementById('proc-porte').value,
     areaNT: document.getElementById('proc-area-nt').value,
-    responsavel: document.getElementById('proc-responsavel').value,
+    responsavel: (document.getElementById('proc-responsavel') || {}).value || '',
     inicio: document.getElementById('proc-inicio').value,
     previsao: document.getElementById('proc-previsao').value,
     status: document.getElementById('proc-status').value,
@@ -8458,41 +8474,8 @@ console.log('[GTTRCG] Patch final carregado ✓');
 
 // ── 1. RESPONSÁVEL GTTRCG: select de usuários da equipe ─────
 // Patch no modal de novo processo: transforma o input texto em select
-(function patchResponsavelSelect() {
-  const el = document.getElementById('proc-responsavel');
-  if (!el || el.tagName === 'SELECT') return;
-
-  const sel = document.createElement('select');
-  sel.id = 'proc-responsavel';
-  sel.className = el.className;
-  sel.style.cssText = el.style.cssText || '';
-
-  // Popula com membros da equipe
-  const populateResp = () => {
-    const usuarios = getUsuariosAtribuicao ? getUsuariosAtribuicao() : (ls('usuarios') || []).filter(u => u.login !== 'admin');
-    sel.innerHTML = '<option value="">— Selecionar responsável —</option>' +
-      usuarios.map(u => `<option value="${u.login}">${u.nome || u.login}</option>`).join('');
-  };
-
-  populateResp();
-  el.parentNode.replaceChild(sel, el);
-
-  // Remove o datalist de pessoas que era usado antes
-  const dl = document.getElementById('list-pessoas');
-  if (dl) dl.remove();
-
-  // Re-popula quando o modal abre (usuários podem mudar)
-  const _origOpenNovoProc = openNovoProcesso;
-  openNovoProcesso = function() {
-    _origOpenNovoProc();
-    setTimeout(populateResp, 50);
-  };
-  const _origOpenEditarProc = openEditarProcesso;
-  openEditarProcesso = function(id) {
-    _origOpenEditarProc(id);
-    setTimeout(populateResp, 50);
-  };
-})();
+// ── Responsável GTTRCG: inserido via populateModalSelects (correto) ──
+// O select é construído dinamicamente toda vez que o modal abre
 
 // ── 2. MODAL ETAPA FLUXO: renomeia Fase → Fase Principal e Subfase → Fase ──
 (function renomearCamposEtapa() {
@@ -9487,4 +9470,246 @@ autoFillUnidade = function() {
 };
 
 console.log('[GTTRCG] statusCG + repasse + moeda carregados ✓');
+</script>
+<script>
+// ============================================================
+// PATCH — REPASSE NA ABA CONTRATOS + GRÁFICO DE REPASSE
+// ============================================================
+
+// ── Adiciona container para proc-responsavel select ──────────
+// Garante que existe no HTML do modal
+(function ensureRespContainer() {
+  // Executa após o DOM estar pronto
+  const checkAndPatch = () => {
+    const respEl = document.getElementById('proc-responsavel');
+    if (!respEl) return;
+    if (respEl.parentElement?.id === 'proc-responsavel-container') return;
+    // Cria container e move o campo
+    const container = document.createElement('div');
+    container.id = 'proc-responsavel-container';
+    respEl.parentNode.insertBefore(container, respEl);
+    container.appendChild(respEl);
+  };
+  // Tenta imediatamente e via MutationObserver para quando o modal abrir
+  checkAndPatch();
+  const obs = new MutationObserver(checkAndPatch);
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
+
+// ── Formata valor em BRL ─────────────────────────────────────
+function fmtBRL(val) {
+  if (!val && val !== 0) return '-';
+  return Number(val).toLocaleString('pt-BR', { style:'currency', currency:'BRL', minimumFractionDigits:2 });
+}
+
+// ── Override buildCtRow: adiciona coluna Repasse ─────────────
+buildCtRow = function(u) {
+  const diasLabel = u.diasFim === null ? '-'
+    : u.diasFim < 0 ? `<span style="color:var(--red2)">${u.diasFim}d / ${Math.abs(u.mesesFim)}m</span>`
+    : `${u.diasFim}d / ${u.mesesFim}m / ${u.anosFim}a`;
+
+  const vig2Label = u.diasVig2 === null ? '-'
+    : `${fmtDate(u.vigencia2anos)} <small style="color:${u.diasVig2<0?'var(--red2)':'var(--text3)'}">(${u.diasVig2<0?'Venc. há ':'+'}${Math.abs(u.diasVig2)}d)</small>`;
+
+  const prevCor   = u.diasParaPrevisao === null ? '' : u.diasParaPrevisao < 0 ? 'var(--red2)' : u.diasParaPrevisao < 60 ? 'var(--yellow2)' : '';
+  const prevLabel = u.previsaoDate
+    ? `<span style="color:${prevCor}">${fmtDate(u.previsaoDate.toISOString().slice(0,10))}${u.diasParaPrevisao<0?' ⚠':''}</span>`
+    : '-';
+
+  const repasseLabel = u.repasse
+    ? `<span style="font-family:var(--mono);font-size:11px">${fmtBRL(u.repasse)}</span>`
+    : '-';
+
+  return `<tr>
+    <td>
+      <div style="font-weight:500;font-size:13px">${u.nome}</div>
+      <div style="font-size:11px;color:var(--text3)">${u.cidade||''}</div>
+      <div style="margin-top:3px">${statusBadgeHtml(u.statusCG||'-')}</div>
+    </td>
+    <td><span class="badge ${tipoBadge(u.tipo)}">${u.tipo||'-'}</span></td>
+    <td style="font-weight:600;font-size:12px">${u.ossSigla||u.ossGestora||'-'}</td>
+    <td style="font-family:var(--mono);font-size:12px">${u.cg||'-'}</td>
+    <td style="font-family:var(--mono);font-size:12px">${fmtDate(u.cgFim)}</td>
+    <td style="font-size:12px">${vig2Label}</td>
+    <td style="font-size:12px">${prevLabel}</td>
+    <td style="font-family:var(--mono);font-size:12px">${diasLabel}</td>
+    <td>${statusBadgeHtml(u.statusGeral)}</td>
+    <td style="font-size:11px;text-align:right">${repasseLabel}</td>
+  </tr>`;
+};
+
+// ── Adiciona cabeçalho da coluna Repasse nas tabelas ─────────
+(function addRepasseHeader() {
+  const addTh = (tableId) => {
+    const thead = document.querySelector(`#${tableId} thead tr`);
+    if (thead && !thead.querySelector('[data-repasse]')) {
+      const th = document.createElement('th');
+      th.setAttribute('data-repasse','1');
+      th.textContent = 'Repasse Mensal';
+      th.style.textAlign = 'right';
+      thead.appendChild(th);
+    }
+  };
+  // Tenta agora e após render
+  setTimeout(() => addTh('ct-table'), 300);
+  const obs = new MutationObserver(() => addTh('ct-table'));
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
+
+// ── Override renderCtPorOss para incluir coluna Repasse ──────
+const _origRenderCtPorOss = renderCtPorOss;
+renderCtPorOss = function(data, ossSet) {
+  const container = document.getElementById('ct-por-oss');
+  if (!container) return;
+
+  const semOss = data.filter(u => !u.ossSigla);
+  const grupos = [...ossSet, ...(semOss.length ? ['Sem OSS'] : [])];
+
+  container.innerHTML = grupos.map(ossKey => {
+    const unids = ossKey === 'Sem OSS'
+      ? data.filter(u => !u.ossSigla)
+      : data.filter(u => u.ossSigla === ossKey);
+    if (!unids.length) return '';
+
+    const totalRepasse = unids.reduce((s, u) => s + (Number(u.repasse)||0), 0);
+
+    return `<div class="config-section" style="margin-bottom:14px">
+      <div class="config-section-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div class="config-section-title">🏥 ${ossKey} <small style="font-weight:400;color:var(--text3)">${unids.length} unidade${unids.length!==1?'s':''}</small></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${totalRepasse > 0 ? `<span style="font-size:11px;font-weight:600;color:var(--green)">Total: ${fmtBRL(totalRepasse)}/mês</span>` : ''}
+          ${['Vigente','Alerta','Expirado'].map(s => {
+            const n = unids.filter(u=>u.statusGeral===s).length;
+            return n ? statusBadgeHtml(s).replace('>', `: ${n}>`).replace(s, `${s}: ${n}`) : '';
+          }).join('')}
+        </div>
+      </div>
+      <div class="config-section-body" style="padding:0;overflow-x:auto">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr>
+            <th>UNIDADE</th><th>TIPO</th><th>OSS</th><th>Nº CG</th>
+            <th>Fim CG (10A)</th><th>Fim Vigência 2A</th>
+            <th>Previsão Novo Processo</th><th>Dias p/ Fim CG</th><th>Status Geral</th>
+            <th style="text-align:right">Repasse Mensal</th>
+          </tr></thead>
+          <tbody>${unids.sort((a,b)=>(a.diasFim??99999)-(b.diasFim??99999)).map(buildCtRow).join('')}</tbody>
+          <tfoot><tr>
+            <td colspan="9" style="text-align:right;font-size:11px;color:var(--text3);padding:6px 10px">Total repasse OSS ${ossKey}:</td>
+            <td style="text-align:right;font-weight:700;font-size:12px;color:var(--green);font-family:var(--mono);padding:6px 10px">${fmtBRL(totalRepasse)}/mês</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+};
+
+// ── Gráfico 5: Repasse Mensal por OSS ────────────────────────
+// Injeta um 5º gráfico na aba de Gráficos Gerais
+(function addRepasseChart() {
+  const observer = new MutationObserver(() => {
+    const graficosGrid = document.querySelector('#tab-ct-graficos > div');
+    if (!graficosGrid || graficosGrid.querySelector('#chart-repasse-container')) return;
+
+    const section = document.createElement('div');
+    section.className = 'config-section';
+    section.id = 'chart-repasse-container';
+    section.style.margin = '0';
+    section.style.gridColumn = '1 / -1'; // largura total
+    section.innerHTML = `
+      <div class="config-section-header">
+        <div class="config-section-title">💰 Repasse Mensal por OSS (R$)</div>
+      </div>
+      <div class="config-section-body">
+        <canvas id="chart-repasse" height="120"></canvas>
+      </div>`;
+    graficosGrid.appendChild(section);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+})();
+
+// ── Override renderCtGraficos: adiciona gráfico de repasse ───
+const _origRenderCtGraficos = renderCtGraficos;
+renderCtGraficos = function(data) {
+  _origRenderCtGraficos(data);
+
+  // Aguarda Chart.js e o canvas
+  setTimeout(() => {
+    if (!window.Chart) return;
+    const canvas = document.getElementById('chart-repasse');
+    if (!canvas) return;
+
+    // Agrupa repasse por OSS
+    const ossRepasse = {};
+    data.forEach(u => {
+      const k = u.ossSigla || 'Sem OSS';
+      ossRepasse[k] = (ossRepasse[k]||0) + (Number(u.repasse)||0);
+    });
+
+    const sorted = Object.entries(ossRepasse)
+      .filter(([,v]) => v > 0)
+      .sort(([,a],[,b]) => b - a);
+
+    const labels = sorted.map(([k]) => k);
+    const vals   = sorted.map(([,v]) => v);
+    const paleta = ['#1B3A6B','#1D6B3B','#c07d00','#C0392B','#8e44ad','#2980b9','#16a085','#d35400','#2c3e50','#7f8c8d'];
+
+    destroyChart('chart-repasse');
+    _ctCharts['chart-repasse'] = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Repasse Mensal (R$)',
+          data: vals,
+          backgroundColor: labels.map((_,i) => paleta[i % paleta.length] + 'CC'),
+          borderRadius: 6,
+          borderWidth: 0,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: c => fmtBRL(c.parsed.y) + '/mês'
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: v => 'R$ ' + (v/1000000).toFixed(1) + 'M'
+            }
+          },
+          x: { ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }, 200);
+};
+
+// ── KPI: Repasse total no painel de KPIs ─────────────────────
+const _origRenderContratosKPI = renderContratos;
+renderContratos = function() {
+  _origRenderContratosKPI();
+  // Adiciona KPI de repasse total após renderizar
+  setTimeout(() => {
+    const kpisEl = document.getElementById('ct-kpis');
+    if (!kpisEl || kpisEl.querySelector('[data-repasse-kpi]')) return;
+    const data = calcContratosData();
+    const total = data.reduce((s, u) => s + (Number(u.repasse)||0), 0);
+    if (total === 0) return;
+    const div = document.createElement('div');
+    div.setAttribute('data-repasse-kpi', '1');
+    div.style.cssText = 'background:rgba(29,107,59,.1);border:1px solid rgba(29,107,59,.3);border-radius:var(--radius2);padding:12px;text-align:center;grid-column:1/-1';
+    div.innerHTML = `
+      <div style="font-size:13px;font-weight:700;color:var(--green)">${fmtBRL(total)}/mês</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">Repasse Mensal Total do Portfólio</div>`;
+    kpisEl.appendChild(div);
+  }, 100);
+};
+
+console.log('[GTTRCG] Repasse + fix openNovoProcesso carregados ✓');
 </script>
