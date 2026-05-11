@@ -1229,13 +1229,9 @@ function initData() {
     ls('fases', ['Confecção de NT/ETP','Confecção de TR','Aprovação','Instrução Financeira','Remessa à SAD','Externa (SAD)','Contratação','Concluído']);
   }
   if (!ls('processos')) {
-    ls('processos', [
-      { id: 'p1', nome: 'Hospital Central de Paulista', tipo: 'Hospital', oss: 'N/A', cg: '-', sei: '2300002728.000282/2025-18', tipoProcesso: 'Regular', inicio: '2025-10-02', status: 'Remetido à SAD', fase: 'Remessa à SAD', progresso: 32, macro: 'I', regiao: 'I', municipio: 'Paulista', areaNT: 'SEAS/DGLCA', responsavel: 'Ivson', obs: '', acompanhamento: {}, vigInicio: '', vigFim: '', statusCG: 'Nova Unidade' },
-      { id: 'p2', nome: 'CER Macrorregião II - Caruaru', tipo: 'CER', oss: 'N/A', cg: '-', sei: '2300000193.000041/2026-00', tipoProcesso: 'Regular', inicio: '2026-02-02', status: 'Dimensionamento de Pessoal, Em Elaboração de TR', fase: 'Confecção de NT/ETP', progresso: 15, macro: 'II', regiao: 'IV', municipio: 'Caruaru', areaNT: 'A Definir', responsavel: 'Danilo', obs: '', acompanhamento: {}, vigInicio: '', vigFim: '', statusCG: 'Nova Unidade' },
-      { id: 'p3', nome: 'Hospital Central de Paulista - Emergencial', tipo: 'Hospital', oss: 'N/A', cg: '-', sei: '2300002728.000106/2026-59', tipoProcesso: 'Dispensa de Seleção', inicio: '2026-04-08', status: 'Em Finalização da Instrução Processual, Contratação Concluída', fase: 'Contratação', progresso: 90, macro: 'I', regiao: 'I', municipio: 'Paulista', areaNT: 'SEAS/DGLCA', responsavel: 'Ivson', obs: '', acompanhamento: {}, vigInicio: '', vigFim: '', statusCG: 'Nova Unidade' },
-      { id: 'p4', nome: 'Hospital Brites de Albuquerque', tipo: 'Hospital', oss: 'HTRI', cg: '001/2023', sei: '', tipoProcesso: '', inicio: '', status: 'Aguardando Início do Processo', fase: '', progresso: 0, macro: 'I', regiao: 'I', municipio: 'Olinda', areaNT: '', responsavel: '', obs: '', acompanhamento: {}, vigInicio: '2023-07-28', vigFim: '2033-07-25', statusCG: 'Vigente' },
-      { id: 'p5', nome: 'Hospital da Mulher do Agreste', tipo: 'Hospital', oss: 'SPCC', cg: '001/2025', sei: '', tipoProcesso: '', inicio: '', status: 'Aguardando Início do Processo', fase: '', progresso: 0, macro: 'II', regiao: 'IV', municipio: 'Caruaru', areaNT: '', responsavel: '', obs: '', acompanhamento: {}, vigInicio: '2025-02-21', vigFim: '2035-02-19', statusCG: 'Vigente' },
-    ]);
+    // Processos iniciam vazios — são gerenciados exclusivamente pelo sistema
+    // e armazenados no Google Sheets. Nunca usar dados hardcoded aqui.
+    ls('processos', []);
   }
   if (!ls('etapasFluxo')) {
     ls('etapasFluxo', [
@@ -8251,32 +8247,25 @@ const GTTRCG_CONFIG = {
 
 // ── 1. LIMPA PROCESSOS HARDCODED DO initData ────────────────
 // Substitui a inicialização de processos por array vazio
-const _origInitDataClean = initData;
-initData = function() {
-  _origInitDataClean();
-  // Se os processos no localStorage são os hardcoded (têm IDs p1,p2,p3...)
-  // e não vieram do Sheets, remove-os
-  const procs = ls('processos') || [];
-  const hardcodedIds = ['p1','p2','p3','p4','p5','p6','p7','p8'];
-  const temHardcoded = procs.some(p => hardcodedIds.includes(p.id));
-  if (temHardcoded && !GSHEET_URL) {
-    // Só limpa se não há Sheets configurado (dados locais de teste)
-    ls('processos', []);
-    renderMonitoramento();
-    updateSidebarCounts();
-    console.log('[GTTRCG] Processos hardcoded removidos ✓');
-  }
-};
+// initData não precisa mais de patch para processos
+// os hardcoded foram removidos do próprio initData
 
-// Limpa imediatamente se existirem
+// Limpa processos hardcoded do localStorage SEM gravar no Sheets
 (function limparHardcoded() {
-  const procs = ls('processos') || [];
-  const hardcodedIds = ['p1','p2','p3','p4','p5','p6','p7','p8'];
-  const temHardcoded = procs.some(p => hardcodedIds.includes(p.id));
-  if (temHardcoded) {
-    ls('processos', []);
-    console.log('[GTTRCG] Processos de teste removidos do localStorage ✓');
-  }
+  const raw = localStorage.getItem('gttrcg_processos');
+  if (!raw) return;
+  try {
+    const procs = JSON.parse(raw);
+    const hardcodedIds = ['p1','p2','p3','p4','p5','p6','p7','p8'];
+    const temHardcoded = procs.some(p => hardcodedIds.includes(p.id));
+    if (temHardcoded) {
+      // Remove apenas os hardcoded, preserva processos reais
+      const reais = procs.filter(p => !hardcodedIds.includes(p.id));
+      // Grava direto no localStorage sem disparar sync para o Sheets
+      localStorage.setItem('gttrcg_processos', JSON.stringify(reais));
+      console.log('[GTTRCG] Processos de teste removidos do localStorage ✓');
+    }
+  } catch(e) {}
 })();
 
 // ── 2. NOVO PROCESSO: fase e status padrão + responsável GTTRCG ──
