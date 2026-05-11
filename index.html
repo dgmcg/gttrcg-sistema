@@ -2496,7 +2496,7 @@ function getCatConfig(key) {
     if (schema) return { fields: schema.map(f => f.key), schema };
     // Fallback se schema ainda não foi inicializado
     const defaults = {
-      unidades: ['nome','sigla','tipo','cnpj','cg','cgInicio','cgFim','vigencia2anos','macro','regiao','cidade','endereco','ossGestora','cnpjOss','porte','leitos'],
+      unidades: ['nome','sigla','tipo','cnpj','cg','cgInicio','cgFim','vigencia2anos','macro','regiao','cidade','endereco','ossGestora','cnpjOss','porte','leitos','statusCG','repasse'],
       oss:      ['sigla','nome','cnpj','endereco','municipio','uf','telefone','email','representante','qualificacao'],
     };
     return { fields: defaults[key] || [], schema: null };
@@ -2520,6 +2520,18 @@ function buildDadoFixoForm(key, fields, item) {
       input = `<input type="number" id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full" value="${val}" placeholder="${s.label}">`;
     } else if (s.tipo === 'textarea') {
       input = `<textarea id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full" rows="2" placeholder="${s.label}">${val}</textarea>`;
+    } else if (s.tipo === 'moeda') {
+      input = `<div style="position:relative"><span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none">R$</span><input type="number" id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full" step="0.01" min="0" style="padding-left:30px" value="${val}" placeholder="0,00"></div>`;
+    } else if (s.tipo === 'listafixo' && s.listaFonte) {
+      const listaFonte = ls(s.listaFonte) || [];
+      const opts = listaFonte.map(item => {
+        const label = typeof item === 'string' ? item : (item.sigla || item.nome || item.valor || String(item));
+        return `<option value="${label}" ${label === val ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      input = `<select id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full"><option value="">— Selecionar —</option>${opts}</select>`;
+    } else if (s.tipo === 'select' && s.opcoes) {
+      const opts = s.opcoes.map(o => `<option value="${o}" ${o === val ? 'selected' : ''}>${o}</option>`).join('');
+      input = `<select id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full"><option value="">— Selecionar —</option>${opts}</select>`;
     } else {
       input = `<input type="text" id="dado-field-${i}" data-fieldkey="${s.key}" class="w-full" value="${val}" placeholder="${s.label}">`;
     }
@@ -9449,66 +9461,9 @@ buildCtRow = function(u) {
 
 // ── Renderização do campo tipo moeda nos formulários de dados fixos ──
 // Patch no renderCampoFormDadoFixo para suportar tipo 'moeda'
-const _origRenderCampoForm = renderCampoFormDadoFixo;
-if (typeof renderCampoFormDadoFixo === 'function') {
-  renderCampoFormDadoFixo = function(campo, valor) {
-    if (campo.tipo === 'moeda') {
-      const v = valor !== undefined && valor !== '' ? Number(valor) : '';
-      return `<div class="field-group">
-        <label>${campo.label}${campo.protegido ? ' <span class="badge">obrigatório</span>' : ''}</label>
-        <div style="position:relative">
-          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none">R$</span>
-          <input type="number" name="${campo.key}" step="0.01" min="0"
-            style="padding-left:30px"
-            value="${v}"
-            placeholder="0,00">
-        </div>
-      </div>`;
-    }
-    if (campo.tipo === 'listafixo' && campo.listaFonte) {
-      const lista = ls(campo.listaFonte) || [];
-      const options = lista.map(item => {
-        const label = typeof item === 'string' ? item : (item.sigla || item.nome || item.valor || '');
-        const selected = label === valor ? 'selected' : '';
-        return `<option value="${label}" ${selected}>${label}</option>`;
-      }).join('');
-      return `<div class="field-group">
-        <label>${campo.label}</label>
-        <select name="${campo.key}">
-          <option value="">— Selecionar —</option>
-          ${options}
-        </select>
-      </div>`;
-    }
-    return _origRenderCampoForm(campo, valor);
-  };
-}
+// [patch removido - função não existia]
 
-// ── Patch: abre formulário de edição de unidade com campos moeda e listafixo ──
-// Garante que openEditarDadoFixo('unidades', id) renderiza corretamente
-const _origOpenEditarDadoFixoMoeda = openEditarDadoFixo;
-openEditarDadoFixo = function(key, id) {
-  _origOpenEditarDadoFixoMoeda(key, id);
-  // Após renderizar, garante que selects de listafixo têm o valor correto
-  setTimeout(() => {
-    const schema = ls('schema_' + key) || [];
-    const data   = ls(key) || [];
-    const item   = data.find(x => x.id === id);
-    if (!item) return;
-    schema.forEach(campo => {
-      if (campo.tipo === 'listafixo') {
-        const sel = document.querySelector(`[name="${campo.key}"]`);
-        if (sel && item[campo.key]) sel.value = item[campo.key];
-      }
-    });
-  }, 100);
-};
-
-// ── Patch openAdicionarDadoFixo para campos moeda/listafixo ──
-const _origOpenAdicionarDadoFixoMoeda = openAdicionarDadoFixo;
-openAdicionarDadoFixo = function(key) {
-  _origOpenAdicionarDadoFixoMoeda(key);
-};
+// [patch removido - função não existia]
 
 // ── Exibição do repasse nos itens da lista de unidades ────────
 // Sobrescreve getItemDisplay para incluir repasse formatado
