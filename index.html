@@ -851,7 +851,143 @@ tbody td { padding: 10px 12px; vertical-align: middle; color: var(--text); }
       </div>
     </div>
   </div>
-</div>>
+</div>
+
+<!-- Modal: Novo/Editar Processo -->
+<div id="modal-processo" class="modal-overlay">
+  <div class="modal" style="width:780px;max-width:96vw">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-processo-title">Novo Processo</div>
+        <div class="modal-subtitle">Cadastro de acompanhamento GTTRCG</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-processo')">×</button>
+    </div>
+    <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+      <input type="hidden" id="proc-id">
+
+      <!-- STATUS DO CONTRATO -->
+      <div class="form-section-title">STATUS DO CONTRATO DE GESTÃO</div>
+      <div class="form-grid">
+        <div class="field-group">
+          <label>Status do Contrato *</label>
+          <select id="proc-status-cg-top">
+            <option value="">Selecionar...</option>
+          </select>
+        </div>
+        <div class="field-group" style="background:var(--bg2);border-radius:var(--radius);padding:10px;font-size:12px;color:var(--text3)">
+          💡 Selecione a unidade abaixo para preencher automaticamente os dados do contrato cadastrado.
+        </div>
+      </div>
+
+      <!-- IDENTIFICAÇÃO -->
+      <div class="form-section-title">IDENTIFICAÇÃO DA UNIDADE</div>
+      <div class="form-grid">
+        <div class="field-group" style="grid-column:1/-1">
+          <label>Unidade de Saúde *</label>
+          <select id="proc-unidade" onchange="autoFillUnidade()">
+            <option value="">Selecionar...</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Tipo</label>
+          <input type="text" id="proc-tipo" placeholder="Ex: Hospital, UPA, UPAE...">
+          <datalist id="list-tipos"></datalist>
+        </div>
+        <div class="field-group">
+          <label>Nº Contrato de Gestão</label>
+          <input type="text" id="proc-cg" placeholder="Ex: 001/2023">
+        </div>
+        <div class="field-group">
+          <label>Sigla da OSS</label>
+          <input type="text" id="proc-oss" list="list-oss" placeholder="Ex: HTRI, FGH...">
+          <datalist id="list-oss"></datalist>
+        </div>
+        <div class="field-group">
+          <label>Macrorregião</label>
+          <input type="text" id="proc-macro" placeholder="Ex: I, II, III...">
+        </div>
+        <div class="field-group">
+          <label>Região de Saúde</label>
+          <input type="text" id="proc-regiao" placeholder="Ex: I, IV...">
+        </div>
+        <div class="field-group">
+          <label>Município</label>
+          <input type="text" id="proc-municipio" placeholder="Ex: Recife, Caruaru...">
+        </div>
+        <div class="field-group">
+          <label>Porte</label>
+          <input type="text" id="proc-porte" placeholder="Ex: Grande, Médio...">
+        </div>
+        <div class="field-group">
+          <label>Início da Vigência</label>
+          <input type="date" id="proc-vig-inicio">
+        </div>
+        <div class="field-group">
+          <label>Fim da Vigência (10 anos)</label>
+          <input type="date" id="proc-vig-fim">
+        </div>
+        <div class="field-group">
+          <label>Status do CG</label>
+          <select id="proc-status-cg"><option value="">-</option></select>
+        </div>
+      </div>
+
+      <!-- PROCESSO -->
+      <div class="form-section-title">DADOS DO PROCESSO</div>
+      <div class="form-grid">
+        <div class="field-group">
+          <label>Nº SEI do Processo</label>
+          <input type="text" id="proc-sei" placeholder="Ex: 2300000000.000001/2025-01">
+        </div>
+        <div class="field-group">
+          <label>Tipo de Processo</label>
+          <select id="proc-tipo-processo"><option value="">Selecionar...</option></select>
+        </div>
+        <div class="field-group">
+          <label>Área / NT Responsável</label>
+          <input type="text" id="proc-area-nt" list="list-setores" placeholder="Ex: SEAS/DGLCA">
+          <datalist id="list-setores"></datalist>
+        </div>
+        <div class="field-group" id="proc-responsavel-container">
+          <label>Responsável GTTRCG</label>
+          <select id="proc-responsavel">
+            <option value="">— Selecionar responsável —</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Data de Início</label>
+          <input type="date" id="proc-inicio">
+        </div>
+        <div class="field-group">
+          <label>Previsão de Conclusão</label>
+          <input type="date" id="proc-previsao">
+        </div>
+      </div>
+
+      <!-- STATUS E FASE -->
+      <div class="form-section-title">STATUS E FASE ATUAL</div>
+      <div class="form-grid">
+        <div class="field-group">
+          <label>Status Atual *</label>
+          <select id="proc-status"><option value="">Selecionar...</option></select>
+        </div>
+        <div class="field-group">
+          <label>Fase Atual</label>
+          <select id="proc-fase"><option value="">Selecionar...</option></select>
+        </div>
+        <div class="field-group" style="grid-column:1/-1">
+          <label>Observações</label>
+          <textarea id="proc-obs" rows="2" placeholder="Observações gerais sobre o processo..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-processo')">Cancelar</button>
+      <button class="btn primary" onclick="salvarProcesso()">Salvar Processo</button>
+    </div>
+  </div>
+</div>
 
 <!-- Modal: Detalhe do Processo (acompanhamento) -->
 <div id="modal-detalhe" class="modal-overlay">
