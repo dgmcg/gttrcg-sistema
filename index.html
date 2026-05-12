@@ -9285,7 +9285,7 @@ function buildCtRow(u) {
   // Status do contrato dos dados fixos (campo statusCG)
   const scLabel = u.statusCG || '-';
 
-  return `<tr>
+  return `<tr style="cursor:pointer" onclick="openEditarDadoFixo('unidades','${u.id}')" title="Clique para editar esta unidade">
     <td>
       <div style="font-weight:500;font-size:13px">${u.nome}</div>
       <div style="font-size:11px;color:var(--text3)">${u.cidade||''}</div>
@@ -9552,7 +9552,7 @@ buildCtRow = function(u) {
   // OSS sigla
   const ossLabel = u.ossSigla || u.ossGestora || '-';
 
-  return `<tr>
+  return `<tr style="cursor:pointer" onclick="openEditarDadoFixo('unidades','${u.id}')" title="Clique para editar">
     <td>
       <div style="font-weight:500;font-size:13px">${u.nome}</div>
       <div style="font-size:11px;color:var(--text3)">${u.cidade || ''}</div>
@@ -9656,7 +9656,7 @@ buildCtRow = function(u) {
     ? `<span style="font-family:var(--mono);font-size:11px">${fmtBRL(u.repasse)}</span>`
     : '-';
 
-  return `<tr>
+  return `<tr style="cursor:pointer" onclick="openEditarDadoFixo('unidades','${u.id}')" title="Clique para editar">
     <td>
       <div style="font-weight:500;font-size:13px">${u.nome}</div>
       <div style="font-size:11px;color:var(--text3)">${u.cidade||''}</div>
